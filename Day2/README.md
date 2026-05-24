@@ -24,4 +24,4 @@
 
 > Test plan generated from a given Product Requirement Document using Ollama running the Gemma4 model locally.
 
-_(Add your test plan file or paste content here)_
+**File:** [VWO Login Dashboard Test Plan.docx](./VWO%20Login%20Dashboard%20Test%20Plan.docx)
