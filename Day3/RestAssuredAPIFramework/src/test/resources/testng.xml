@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<suite name="REST Assured API Test Suite" parallel="false" verbose="1">
+
+    <test name="Smoke Tests" preserve-order="true">
+        <groups>
+            <run>
+                <include name="smoke"/>
+            </run>
+        </groups>
+        <classes>
+            <class name="com.apitests.get.GetPostsTest"/>
+            <class name="com.apitests.post.CreatePostTest"/>
+            <class name="com.apitests.put.UpdatePostTest"/>
+            <class name="com.apitests.delete.DeletePostTest"/>
+            <class name="com.apitests.endtoend.CrudFlowTest"/>
+        </classes>
+    </test>
+
+    <test name="Regression Tests" preserve-order="true">
+        <groups>
+            <run>
+                <include name="regression"/>
+            </run>
+        </groups>
+        <classes>
+            <class name="com.apitests.get.GetPostsTest"/>
+            <class name="com.apitests.post.CreatePostTest"/>
+            <class name="com.apitests.put.UpdatePostTest"/>
+            <class name="com.apitests.delete.DeletePostTest"/>
+            <class name="com.apitests.endtoend.CrudFlowTest"/>
+        </classes>
+    </test>
+
+    <test name="Negative Tests" preserve-order="true">
+        <groups>
+            <run>
+                <include name="negative"/>
+            </run>
+        </groups>
+        <classes>
+            <class name="com.apitests.get.GetPostsTest"/>
+            <class name="com.apitests.post.CreatePostTest"/>
+            <class name="com.apitests.put.UpdatePostTest"/>
+            <class name="com.apitests.delete.DeletePostTest"/>
+        </classes>
+    </test>
+
+</suite>

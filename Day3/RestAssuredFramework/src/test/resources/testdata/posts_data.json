@@ -1,0 +1,13 @@
+// FILE: src/test/resources/testdata/posts_data.json
+[
+  {
+    "userId": 1,
+    "title": "Post Title 1",
+    "body": "Post body 1"
+  },
+  {
+    "userId": 2,
+    "title": "Post Title 2",
+    "body": "Post body 2"
+  }
+]

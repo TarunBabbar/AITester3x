@@ -1,0 +1,17 @@
+[
+  {
+    "userId": 1,
+    "title": "DataProvider Post Title One",
+    "body": "This is the body content for data-driven test post number one"
+  },
+  {
+    "userId": 2,
+    "title": "DataProvider Post Title Two",
+    "body": "This is the body content for data-driven test post number two"
+  },
+  {
+    "userId": 3,
+    "title": "DataProvider Post Title Three",
+    "body": "This is the body content for data-driven test post number three"
+  }
+]

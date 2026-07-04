@@ -1,0 +1,10 @@
+com\apitests\config\ConfigReader.class
+com\apitests\constants\ApiConstants.class
+com\apitests\models\User.class
+com\apitests\utils\JsonUtils.class
+com\apitests\models\Post.class
+com\apitests\base\BaseTest.class
+com\apitests\constants\StatusCodes.class
+com\apitests\utils\ReportManager.class
+com\apitests\utils\JsonUtils$1.class
+com\apitests\utils\RestUtils.class

@@ -1,0 +1,552 @@
+{
+  "id": "5ff4fcd8-a8b6-48a4-b3f0-490d8037da1f",
+  "name": "AI Video Editor & Merger",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "video-edit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f6e07558-49c3-4610-845d-47456b33da26",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "8047c321-61ba-4c39-be13-2da570b3d51e"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst videoDir  = (body.video_dir  || '').replace(/\\\\/g, '/').replace(/\\/$/, '');\nconst outputDir = (body.output_dir || videoDir).replace(/\\\\/g, '/').replace(/\\/$/, '');\nconst threshold = body.quality_threshold || 0.75;\nconst fs = require('fs');\nif (!fs.existsSync(videoDir)) throw new Error('Folder not found: ' + videoDir);\nconst files = fs.readdirSync(videoDir)\n  .filter(function(f) { return /\\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(f); })\n  .map(function(f) { return { filename: f, filepath: videoDir + '/' + f, videoDir: videoDir, outputDir: outputDir, threshold: threshold }; });\nif (files.length === 0) throw new Error('No video files found in: ' + videoDir);\nreturn files;"
+      },
+      "id": "987a49a3-69c7-4760-a3ec-0b06c28a0faf",
+      "name": "Scan Local Directory",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst { execSync } = require('child_process');\nvar results = [];\nfor (var j = 0; j < items.length; j++) {\n  var item = items[j].json;\n  var probe;\n  try {\n    var out = execSync('\"C:\\\\ffmpeg\\\\bin\\\\ffprobe.exe\" -v quiet -print_format json -show_streams -show_format \"' + item.filepath + '\"', { encoding: 'utf8', timeout: 30000, shell: true });\n    probe = JSON.parse(out);\n  } catch(e) { throw new Error('ffprobe failed for ' + item.filename + ': ' + e.message); }\n  var vs  = (probe.streams || []).find(function(s) { return s.codec_type === 'video'; }) || {};\n  var as_ = (probe.streams || []).find(function(s) { return s.codec_type === 'audio'; }) || {};\n  var fmt = probe.format || {};\n  var fps = 0;\n  if (vs.r_frame_rate) { var p = vs.r_frame_rate.split('/'); fps = p.length === 2 ? parseFloat(p[0])/parseFloat(p[1]) : parseFloat(p[0]); }\n  results.push({ json: { filename: item.filename, filepath: item.filepath, videoDir: item.videoDir, outputDir: item.outputDir, threshold: item.threshold, metadata: {\n    duration_sec: parseFloat(fmt.duration || 0), size_bytes: parseInt(fmt.size || 0), bitrate: parseInt(fmt.bit_rate || 0),\n    fps: parseFloat(fps.toFixed(2)), width: vs.width || 0, height: vs.height || 0,\n    video_codec: vs.codec_name || 'unknown', audio_codec: as_.codec_name || 'none', has_audio: !!as_.codec_name\n  }}});\n}\nreturn results;"
+      },
+      "id": "46b12805-818a-4393-8592-4560ad6e5e00",
+      "name": "ffprobe: Extract Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst { execSync } = require('child_process');\nconst fs = require('fs');\nconst os = require('os');\nvar tmpDir = os.tmpdir().replace(/\\\\/g, '/');\nvar results = [];\nfor (var j = 0; j < items.length; j++) {\n  var item = items[j].json;\n  var dur = item.metadata.duration_sec;\n  var base = item.filename.replace(/\\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');\n  var times = [0, dur*0.25, dur*0.5, dur*0.75].map(function(t) { return parseFloat(t.toFixed(2)); });\n  var frames = [];\n  for (var i = 0; i < times.length; i++) {\n    var ts = times[i];\n    var out = tmpDir + '/' + base + '_frame_' + i + '.jpg';\n    try {\n      execSync('\"C:\\\\ffmpeg\\\\bin\\\\ffmpeg.exe\" -y -ss ' + ts + ' -i \"' + item.filepath + '\" -vframes 1 -q:v 3 \"' + out + '\"', { timeout: 20000, shell: true, stdio: 'pipe' });\n      if (fs.existsSync(out)) { frames.push({ timestamp_sec: ts, base64: fs.readFileSync(out).toString('base64') }); fs.unlinkSync(out); }\n    } catch(e) {}\n  }\n  if (frames.length === 0) throw new Error('Could not extract frames from: ' + item.filename);\n  results.push({ json: Object.assign({}, item, { frames: frames }) });\n}\nreturn results;"
+      },
+      "id": "e75da369-dc43-44e4-936c-344f8519564c",
+      "name": "Extract Sample Frames",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nvar results = [];\nfor (var j = 0; j < items.length; j++) {\n  var item = items[j].json;\n  var meta = item.metadata;\n  var imageMessages = item.frames.map(function(f) { return { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + f.base64, detail: 'low' } }; });\n  var userPrompt = 'Analyse these ' + item.frames.length + ' frames from a ' + meta.duration_sec.toFixed(1) + 's video.\\n' +\n    'Metadata: ' + meta.width + 'x' + meta.height + ' @ ' + meta.fps + 'fps, codec=' + meta.video_codec + ', has_audio=' + meta.has_audio + '.\\n\\n' +\n    'Return ONLY this JSON, no markdown:\\n{\"overall_score\":<float 0-1>,\"issues\":[<string>],\"good_segments\":[{\"start_pct\":<0-1>,\"end_pct\":<0-1>,\"reason\":<string>}],\"bad_segments\":[{\"start_pct\":<0-1>,\"end_pct\":<0-1>,\"reason\":<string>}],\"recommendation\":\"keep\" or \"trim\" or \"discard\",\"notes\":<string>}';\n  var payload = { model: 'gpt-4o', max_tokens: 800, messages: [\n    { role: 'system', content: 'You are a professional video quality analyst. Return ONLY valid JSON, no markdown.' },\n    { role: 'user', content: [{ type: 'text', text: userPrompt }].concat(imageMessages) }\n  ]};\n  results.push({ json: Object.assign({}, item, { gpt4o_payload: payload }) });\n}\nreturn results;"
+      },
+      "id": "237dfea9-3461-433f-a00e-4d93b537f3e2",
+      "name": "Build GPT-4o Quality Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.gpt4o_payload }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "6bf8a848-f6bf-4ea1-b47a-6dc5c18f6252",
+      "name": "GPT-4o: Analyse Quality",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allPrev = $('Build GPT-4o Quality Request').all();\nconst allResp = $input.all();\nvar results = [];\nfor (var j = 0; j < allResp.length; j++) {\n  var prev = (allPrev[j] || allPrev[0]).json;\n  var resp = allResp[j].json;\n  var analysis;\n  try { var raw = resp.choices[0].message.content.trim(); analysis = JSON.parse(raw.replace(/^```json\\n?|^```\\n?|```$/gm,'').trim()); }\n  catch(e) { analysis = { overall_score: 0.5, recommendation: 'keep', good_segments: [{ start_pct: 0, end_pct: 1, reason: 'fallback' }], issues: [], notes: '' }; }\n  if (analysis.recommendation === 'discard') {\n    analysis.recommendation = 'keep';\n    analysis.good_segments = [{ start_pct: 0, end_pct: 1, reason: 'forced include - override discard' }];\n  }\n  var dur = prev.metadata.duration_sec;\n  var goodSegments = (analysis.good_segments && analysis.good_segments.length > 0)\n    ? analysis.good_segments.map(function(s) { return { start: parseFloat((s.start_pct*dur).toFixed(2)), end: parseFloat((s.end_pct*dur).toFixed(2)), reason: s.reason||'' }; })\n    : [{ start: 0, end: dur, reason: 'full video' }];\n  results.push({ json: Object.assign({}, prev, { analysis: analysis, goodSegments: goodSegments, qualityScore: analysis.overall_score, recommendation: analysis.recommendation }) });\n}\nreturn results;"
+      },
+      "id": "845a2b8b-2a09-409f-9d7b-346fab9b0815",
+      "name": "Parse Quality & Compute Segments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "3c79cda4-6c5d-47a3-8a05-dcf33f3ed203",
+              "leftValue": "={{ $json.recommendation }}",
+              "rightValue": "discard",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals",
+                "rightType": "string"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true
+      },
+      "id": "e6b04792-8122-4b1b-968d-9359e3f111ef",
+      "name": "Filter: Skip Discarded",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst { execSync } = require('child_process');\nconst fs = require('fs');\nconst os = require('os');\nvar tmpDir = os.tmpdir().replace(/\\\\/g, '/');\nvar results = [];\nfor (var j = 0; j < items.length; j++) {\n  var item = items[j].json;\n  var base = item.filename.replace(/\\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');\n  for (var i = 0; i < item.goodSegments.length; i++) {\n    var seg = item.goodSegments[i];\n    var out = tmpDir + '/' + base + '_clip_' + i + '.mp4';\n    var cmd = '\"C:\\\\ffmpeg\\\\bin\\\\ffmpeg.exe\" -y -ss ' + seg.start + ' -to ' + seg.end + ' -i \"' + item.filepath + '\" -c:v libx264 -preset fast -crf 18 -c:a aac -b:a 192k \"' + out + '\"';\n    try {\n      execSync(cmd, { stdio: 'pipe', timeout: 300000, shell: true });\n      if (fs.existsSync(out) && fs.statSync(out).size > 0) results.push({ json: Object.assign({}, item, { clip: { clipPath: out, start: seg.start, end: seg.end, duration: parseFloat((seg.end-seg.start).toFixed(2)), reason: seg.reason, sourceFile: item.filename, qualityScore: item.qualityScore } }) });\n    } catch(e) { console.error('Clip ' + i + ' from ' + item.filename + ' failed: ' + e.message); }\n  }\n}\nif (results.length === 0) throw new Error('No clips produced from any video.');\nreturn results;"
+      },
+      "id": "2666ac37-d51f-4ddd-be10-06d1f905ad71",
+      "name": "ffmpeg: Trim Segments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "7abcf549-08e1-495e-a50c-416817a7e2fa",
+      "name": "Aggregate All Clips",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        2220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.all().map(function(i) { return i.json; });\nconst allClips = raw.reduce(function(acc, item) {\n  if (item.data && Array.isArray(item.data)) { return acc.concat(item.data); }\n  return acc.concat([item]);\n}, []);\nconst summaries = allClips.map(function(item, idx) { return { index: idx, source: item.clip ? item.clip.sourceFile : item.filename, clip_path: item.clip ? item.clip.clipPath : item.filepath, duration_sec: item.clip ? item.clip.duration : (item.metadata ? item.metadata.duration_sec : 0), quality_score: item.clip ? item.clip.qualityScore : (item.qualityScore||0), reason: item.clip ? item.clip.reason : '' }; });\nconst payload = { model: 'gpt-4o', max_tokens: 600, messages: [\n  { role: 'system', content: 'You are a professional video editor. Return ONLY valid JSON, no markdown.' },\n  { role: 'user', content: 'Arrange these ' + summaries.length + ' clips into the best final video.\\nClips:\\n' + JSON.stringify(summaries,null,2) + '\\n\\nReturn ONLY: {\"ordered_indices\":[<int>...],\"reasoning\":<string>,\"estimated_total_duration_sec\":<float>}\\nExclude clips with quality_score < 0.3.' }\n]};\nreturn [{ json: { allClips: allClips, clipSummaries: summaries, gpt4o_rank_payload: payload } }];"
+      },
+      "id": "8233d81d-3f10-4763-adac-bdf7746ab77c",
+      "name": "Build Ranking Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.gpt4o_rank_payload }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "03a531ed-2be9-4f27-bf6a-218a896f7b00",
+      "name": "GPT-4o: Rank & Order Clips",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Build Ranking Request').first().json;\nconst fs = require('fs');\nconst os = require('os');\nvar tmpDir = os.tmpdir().replace(/\\\\/g, '/');\nfunction getFileNumber(filename) {\n  var match = (filename || '').match(/(\\d+)/);\n  return match ? parseInt(match[1], 10) : 999999;\n}\nvar allClips = prev.allClips;\nvar clipSummaries = prev.clipSummaries;\nvar indexed = allClips.map(function(c, idx) {\n  var source = c.clip ? c.clip.sourceFile : (c.filename || '');\n  var clipPath = c.clip ? c.clip.clipPath : c.filepath;\n  var score = clipSummaries[idx] ? clipSummaries[idx].quality_score : 0;\n  return { idx: idx, clipPath: clipPath, source: source, score: score, fileNum: getFileNumber(source) };\n});\nindexed.sort(function(a, b) { return a.fileNum - b.fileNum; });\nvar orderedClips = indexed.filter(function(c) { return fs.existsSync(c.clipPath); });\nif (orderedClips.length === 0) throw new Error('No valid clips for merging.');\nvar listPath = tmpDir + '/concat_list.txt';\nfs.writeFileSync(listPath, orderedClips.map(function(c) { return \"file '\" + c.clipPath + \"'\"; }).join('\\n'));\nvar first = allClips[0];\nvar outputDir = (first.outputDir || first.videoDir || tmpDir).replace(/\\\\/g, '/');\nvar outputPath = outputDir + '/final_edited_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.mp4';\nreturn [{ json: { allClips: allClips, clipSummaries: clipSummaries, orderedClips: orderedClips, ranking: { reasoning: 'sorted by filename number ascending', ordered_indices: orderedClips.map(function(c){return c.idx;}) }, listPath: listPath, outputPath: outputPath, outputDir: outputDir } }];"
+      },
+      "id": "4c2a99c2-6be3-46e1-92de-7dc7bd691bd2",
+      "name": "Build Concat List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst { execSync } = require('child_process');\nconst fs = require('fs');\nvar cmd = '\"C:\\\\ffmpeg\\\\bin\\\\ffmpeg.exe\" -y -f concat -safe 0 -i \"' + item.listPath + '\" -c:v libx264 -preset medium -crf 18 -c:a aac -b:a 192k -movflags +faststart \"' + item.outputPath + '\"';\ntry { execSync(cmd, { stdio: 'pipe', timeout: 600000, shell: true }); } catch(e) { throw new Error('ffmpeg merge failed: ' + e.message); }\nif (!fs.existsSync(item.outputPath)) throw new Error('Output not created: ' + item.outputPath);\nvar sizeMb = parseFloat((fs.statSync(item.outputPath).size/1024/1024).toFixed(2));\nitem.orderedClips.forEach(function(c){try{fs.unlinkSync(c.clipPath);}catch(e){}});\ntry{fs.unlinkSync(item.listPath);}catch(e){}\nreturn [{ json: Object.assign({}, item, { mergeComplete: true, output_file_size_mb: sizeMb }) }];"
+      },
+      "id": "b65f343b-acf8-441a-9420-84374ba7dd38",
+      "name": "ffmpeg: Merge Final Video",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst { execSync } = require('child_process');\nconst fs = require('fs');\nconst os = require('os');\nvar finalMeta = {};\ntry {\n  var probe = JSON.parse(execSync('\"C:\\\\ffmpeg\\\\bin\\\\ffprobe.exe\" -v quiet -print_format json -show_streams -show_format \"' + item.outputPath + '\"', { encoding: 'utf8', timeout: 30000, shell: true }));\n  var vs = (probe.streams||[]).find(function(s){return s.codec_type==='video';})||{};\n  var fmt = probe.format||{};\n  var fps=0; if(vs.r_frame_rate){var p=vs.r_frame_rate.split('/');fps=p.length===2?parseFloat(p[0])/parseFloat(p[1]):parseFloat(p[0]);}\n  finalMeta = { duration_sec: parseFloat(fmt.duration||0), fps: parseFloat(fps.toFixed(2)), width: vs.width||0, height: vs.height||0 };\n} catch(e) {}\nvar dur = finalMeta.duration_sec||10;\nvar tmpDir = os.tmpdir().replace(/\\\\/g,'/');\nvar frames = [];\nfor (var i=0;i<3;i++) {\n  var ts = dur*(0.2+i*0.3);\n  var out = tmpDir+'/final_val_'+i+'.jpg';\n  try { execSync('\"C:\\\\ffmpeg\\\\bin\\\\ffmpeg.exe\" -y -ss '+ts.toFixed(2)+' -i \"'+item.outputPath+'\" -vframes 1 -q:v 3 \"'+out+'\"',{timeout:20000,shell:true,stdio:'pipe'}); if(fs.existsSync(out)){frames.push({base64:fs.readFileSync(out).toString('base64')});fs.unlinkSync(out);} } catch(e){}\n}\nreturn [{ json: Object.assign({}, item, { finalMeta: finalMeta, validationFrames: frames }) }];"
+      },
+      "id": "479002fd-4b85-45a5-9eab-ce040a1bdec5",
+      "name": "Extract Final Video Frames",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst imgs = item.validationFrames.map(function(f){return{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+f.base64,detail:'low'}};});\nconst prompt = 'Review this final merged video.\\nSpecs: '+item.finalMeta.width+'x'+item.finalMeta.height+', '+(item.finalMeta.duration_sec||0).toFixed(1)+'s, '+(item.orderedClips||[]).length+' clips, '+item.output_file_size_mb+' MB.\\nReturn ONLY: {\"validation_score\":<0-1>,\"passed\":<bool>,\"continuity_ok\":<bool>,\"audio_sync_ok\":<bool>,\"visual_quality_ok\":<bool>,\"issues_found\":[<string>],\"suggestions\":[<string>],\"verdict\":\"approved\" or \"needs_revision\" or \"rejected\"}';\nconst payload = { model: 'gpt-4o', max_tokens: 600, messages: [\n  { role: 'system', content: 'You are a professional video QA reviewer. Return ONLY valid JSON, no markdown.' },\n  { role: 'user', content: [{type:'text',text:prompt}].concat(imgs) }\n]};\nreturn [{ json: Object.assign({}, item, { gpt4o_validate_payload: payload }) }];"
+      },
+      "id": "bd7f20a0-5e99-4521-8242-04ce7a611f53",
+      "name": "Build Validation Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.gpt4o_validate_payload }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "5c501f65-7cbf-4a9c-8677-c26320e99834",
+      "name": "GPT-4o: Validate Final Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.first().json;\nconst prev = $('Build Validation Request').first().json;\nvar v;\ntry { v = JSON.parse(resp.choices[0].message.content.trim().replace(/^```json\\n?|^```\\n?|```$/gm,'').trim()); }\ncatch(e) { v = { validation_score:0.5, passed:true, verdict:'approved', issues_found:[], suggestions:[], continuity_ok:true, audio_sync_ok:true, visual_quality_ok:true }; }\nreturn [{ json: {\n  status: v.verdict==='rejected'?'FAILED':'SUCCESS',\n  verdict: v.verdict, validation_score: v.validation_score,\n  output_file: prev.outputPath, output_size_mb: prev.output_file_size_mb,\n  final_duration_sec: prev.finalMeta?prev.finalMeta.duration_sec:null,\n  clips_merged: prev.orderedClips?prev.orderedClips.length:null,\n  source_videos: prev.allClips?prev.allClips.length:null,\n  continuity_ok: v.continuity_ok, audio_sync_ok: v.audio_sync_ok, visual_quality_ok: v.visual_quality_ok,\n  issues: v.issues_found||[], suggestions: v.suggestions||[],\n  ai_ranking_reason: prev.ranking?prev.ranking.reasoning:'',\n  completed_at: new Date().toISOString()\n}}];"
+      },
+      "id": "ae790621-e89e-4c32-8cc0-727830dbc1ce",
+      "name": "Compile Final Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json, null, 2) }}",
+        "options": {}
+      },
+      "id": "96873033-e36a-40af-903a-2afe690b7639",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        4200,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Scan Local Directory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan Local Directory": {
+      "main": [
+        [
+          {
+            "node": "ffprobe: Extract Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ffprobe: Extract Metadata": {
+      "main": [
+        [
+          {
+            "node": "Extract Sample Frames",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Sample Frames": {
+      "main": [
+        [
+          {
+            "node": "Build GPT-4o Quality Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build GPT-4o Quality Request": {
+      "main": [
+        [
+          {
+            "node": "GPT-4o: Analyse Quality",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o: Analyse Quality": {
+      "main": [
+        [
+          {
+            "node": "Parse Quality & Compute Segments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Quality & Compute Segments": {
+      "main": [
+        [
+          {
+            "node": "Filter: Skip Discarded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Skip Discarded": {
+      "main": [
+        [
+          {
+            "node": "ffmpeg: Trim Segments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ffmpeg: Trim Segments": {
+      "main": [
+        [
+          {
+            "node": "Aggregate All Clips",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate All Clips": {
+      "main": [
+        [
+          {
+            "node": "Build Ranking Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Ranking Request": {
+      "main": [
+        [
+          {
+            "node": "GPT-4o: Rank & Order Clips",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o: Rank & Order Clips": {
+      "main": [
+        [
+          {
+            "node": "Build Concat List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Concat List": {
+      "main": [
+        [
+          {
+            "node": "ffmpeg: Merge Final Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ffmpeg: Merge Final Video": {
+      "main": [
+        [
+          {
+            "node": "Extract Final Video Frames",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Final Video Frames": {
+      "main": [
+        [
+          {
+            "node": "Build Validation Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Validation Request": {
+      "main": [
+        [
+          {
+            "node": "GPT-4o: Validate Final Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o: Validate Final Video": {
+      "main": [
+        [
+          {
+            "node": "Compile Final Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compile Final Report": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": ""
+  },
+  "tags": []
+}

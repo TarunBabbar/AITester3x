@@ -1,0 +1,10 @@
+{
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "chat.tools.terminal.autoApprove": {
+        "/^cmd /c \"dir /s /b src\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "mvn compile": true
+    }
+}
