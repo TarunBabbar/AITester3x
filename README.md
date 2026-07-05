@@ -8,22 +8,24 @@ Daily notes and assignments from the AI Testing course.
 
 ## Project Overview
 
-**AITester3x** is a comprehensive learning repository demonstrating the intersection of **AI-powered test automation** with **traditional QA practices**. This project covers:
+**AITester3x** is a comprehensive learning repository demonstrating the intersection of **AI-powered test automation** with **traditional QA practices** and **modern LLM applications**. This project covers:
 
 - Building enterprise-grade REST API testing frameworks
 - Creating AI agents for test automation workflows
 - Integrating LLMs and automation tools (n8n, Langflow)
-- Practical hands-on implementation of modern test architecture
+- Building full-stack RAG (Retrieval-Augmented Generation) applications
+- Practical hands-on implementation of modern test architecture and AI applications
 
 ---
 
 ## Progress
 
-| Day                       | Topic                                                                 |
+| Day/Project               | Topic                                                                 |
 | ------------------------- | --------------------------------------------------------------------- |
 | [Day 1](./Day1/README.md) | Installation and Set Up – Visual Studio, Antigravity, n8n             |
 | [Day 2](./Day2/README.md) | LLM Basics, Models, Ollama, LM Studio, Tokenization                   |
 | [Day 3](./Day3/)          | REST Assured API Framework, Langflow Automation Agents, n8n Workflows |
+| [RAG Explorer](./BasicRAG/) | Full-stack RAG application – FastAPI backend + React frontend         |
 
 ---
 
@@ -170,3 +172,116 @@ By completing Day 3, you've learned:
 - Advanced workflow automation using n8n
 - Visual workflow design with Langflow
 - AI-assisted test generation and analysis
+
+---
+
+## RAG Explorer – Retrieval-Augmented Generation Application
+
+### 📁 Project Structure
+
+```
+BasicRAG/
+├── backend/                          # Python FastAPI server
+│   ├── main.py                       # FastAPI application entry point
+│   ├── config.py                     # Configuration & environment variables
+│   ├── chunker.py                    # PDF parsing & text chunking
+│   ├── embedder.py                   # Text-to-embeddings conversion
+│   ├── vector_store.py               # ChromaDB wrapper for semantic search
+│   ├── ingestion_watcher.py          # Auto-detect & process new PDFs
+│   ├── llm_service.py                # Groq LLM API integration
+│   └── requirements.txt              # Python dependencies
+│
+├── frontend/                         # React + Vite application
+│   ├── src/
+│   │   ├── App.jsx                   # Main React component with pipeline UI
+│   │   ├── api.js                    # Backend API client
+│   │   ├── main.jsx                  # React entry point
+│   │   └── index.css                 # Tailwind CSS styling
+│   ├── index.html                    # HTML template
+│   ├── vite.config.js                # Vite build configuration
+│   └── package.json                  # Node.js dependencies
+│
+├── data/
+│   ├── pdf/                          # 📥 Drop PDFs here for auto-ingestion
+│   └── chroma_db/                    # Vector database (auto-created)
+│
+├── .gitignore                        # Git exclusion rules
+└── README.md                         # Project documentation
+```
+
+### 🎯 Project Features
+
+**RAG Explorer** is a modern full-stack application demonstrating Retrieval-Augmented Generation:
+
+- **Semantic Search** - Convert documents to embeddings and retrieve relevant context
+- **LLM Integration** - Query Groq API for intelligent responses based on retrieved context
+- **Real-time Pipeline** - Visualize each stage of the RAG process (retrieval, context assembly, LLM response)
+- **Auto-ingestion** - Automatically process new PDFs dropped into the data folder
+- **Visual Dashboard** - Dark-themed UI showing indexed chunks and document sources
+
+### 🛠️ Technology Stack
+
+**Backend:**
+- Python 3.13 + FastAPI
+- ChromaDB for vector storage
+- Sentence-Transformers for embeddings
+- Groq API for LLM integration
+- Watchdog for file monitoring
+- PyPDF for PDF processing
+
+**Frontend:**
+- React 18 with Vite build tool
+- Tailwind CSS for styling
+- Fetch API for backend communication
+
+### 🚀 Quick Start
+
+```bash
+# Backend Setup
+cd BasicRAG/backend
+python -m venv .venv
+.\.venv\Scripts\activate  # Windows
+pip install -r requirements.txt
+
+# Create .env file
+echo GROQ_API_KEY=your_key_here > .env
+
+# Run backend server
+..\.venv\Scripts\python -m uvicorn main:app --reload
+
+# Frontend Setup (in new terminal)
+cd BasicRAG/frontend
+npm install
+npm run dev
+
+# Access at http://localhost:5173
+```
+
+### 📊 RAG Pipeline Flow
+
+1. User submits query → Frontend sends to backend
+2. Query converted to embedding using Sentence-Transformers
+3. Semantic search retrieves top-4 relevant chunks from ChromaDB
+4. Retrieved context assembled and sent to Groq API
+5. LLM generates intelligent response with document context
+6. Pipeline visualization displays all stages in frontend UI
+
+### 🔌 API Endpoints
+
+- `GET /api/health` - Health check
+- `GET /api/stats` - Get indexing statistics (chunks, sources)
+- `POST /api/query` - Submit query and get RAG response
+- `POST /api/reindex` - Manually trigger PDF reprocessing
+
+### ✅ Key Accomplishments
+
+- ✅ Built production-grade RAG system with async processing
+- ✅ Implemented auto-ingestion pipeline for PDF documents
+- ✅ Integrated Groq LLM API for intelligent responses
+- ✅ Created responsive React UI with pipeline visualization
+- ✅ Set up CORS and proper error handling
+- ✅ Comprehensive documentation and troubleshooting guide
+
+---
+
+
