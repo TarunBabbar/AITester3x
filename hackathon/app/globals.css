@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #f5f0e8;
+  --bg-surface: #fbf8f3;
+  --bg-sidebar: #ede6d8;
+  --text-primary: #2b2a27;
+  --text-muted: #6b6558;
+  --accent: #c96442;
+  --border: #e2d9c7;
+  --success: #4f7942;
+  --warning: #c9a227;
+  --danger: #b3452c;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: "Inter", system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}

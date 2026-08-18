@@ -1,0 +1,6 @@
+{
+  "functions": {
+    "app/api/execution/run/route.ts": { "maxDuration": 300 },
+    "app/api/pipelines/route.ts": { "maxDuration": 120 }
+  }
+}
