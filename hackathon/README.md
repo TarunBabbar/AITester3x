@@ -98,7 +98,7 @@ An `orchestrator` (state machine) drives agents in sequence, persists every step
 ## Tech stack
 
 - **Frontend + API**: Next.js 16 (App Router), TypeScript, deployed on Vercel
-- **UI**: Tailwind CSS, Claude-style beige theme, collapsible left nav
+- **UI**: Tailwind CSS, warm beige editorial theme, collapsible left nav
 - **Database**: Neon Postgres (serverless) via Drizzle ORM, `pgvector` for embeddings
 - **LLM provider**: OpenRouter, default model `nvidia/nemotron-nano-9b-v2:free`, fully swappable via `.env`
 - **Eval**: DeepEval (Python microservice) — GEval scores gating each phase
@@ -113,6 +113,23 @@ An `orchestrator` (state machine) drives agents in sequence, persists every step
 - **Self-healing execution**: Playwright runner with retry loop and serverless Chromium (`@sparticuz/chromium`).
 - **Agent registry**: enable/disable agents, edit prompts, or regenerate prompts with one click via OpenRouter.
 - **Async kickoff**: `POST /api/pipelines` returns in ~0.5s; the run proceeds in the background while the UI polls.
+
+## Demo — sample run
+
+Paste this requirement into the **Pipelines** page and click **Run Pipeline**:
+
+> As a user, I can log in with email and password. Wrong password should show an error. Account locks after 5 failed attempts.
+
+What the pipeline produces, phase by phase:
+
+1. **Requirement analysis** → 3 structured requirements (`REQ-001` login, `REQ-002` wrong-password error, `REQ-003` account lock), each with acceptance criteria.
+2. **Test planning** → scope, risk areas (auth, lockout), test types (functional, negative, boundary).
+3. **Test case design** → ~8 Gherkin test cases covering positive, negative, edge, and boundary scenarios, each traced to a requirement ID.
+4. **Execution** (needs `TARGET_APP_URL`) → Playwright scripts run against the target app; failures retry with self-healing.
+5. **Triage** → structured defect reports with severity and root-cause hypotheses for any failures.
+6. **Reporting** → executive summary, RTM coverage percentage, risk gaps, flaky trends.
+
+The timeline on the pipeline detail page shows each phase's status (pending → running → passed/blocked) with DeepEval score badges.
 
 ## Project structure
 
