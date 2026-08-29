@@ -1,11 +1,12 @@
 "use client";
 
-export type ViewKey = "home" | "pipeline" | "automation";
+export type ViewKey = "home" | "pipeline" | "automation" | "run";
 
 const NAV: { key: ViewKey; label: string; icon: string }[] = [
   { key: "home", label: "Home", icon: "⌂" },
   { key: "pipeline", label: "Test Case Generation", icon: "⌁" },
   { key: "automation", label: "Test Automation", icon: "⚙" },
+  { key: "run", label: "Test Run & Report", icon: "▶" },
 ];
 
 /**

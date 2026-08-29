@@ -37,7 +37,14 @@ from pydantic import BaseModel
 from agents import (
     run_framework_agent,
     run_pom_writer_agent,
+    run_ri_agent,
     run_test_case_agent,
+)
+from evaluator import (
+    evaluate_automation,
+    evaluate_ri_coverage,
+    evaluate_test_cases,
+    release_confidence,
 )
 from framework_writer import OUTPUT_DIR, write_framework
 from page_reader import PageReader
@@ -113,6 +120,7 @@ class AutomateRequest(BaseModel):
 
 class RunTestsRequest(BaseModel):
     run_id: str
+    test_names: list[str] = []  # empty = run the whole suite
 
 
 # ---------------------------------------------------------------------------
@@ -137,26 +145,70 @@ def _save_run(run_id: str, step: str, content: str) -> Path:
 
 
 def _extract_json(text: str) -> list:
-    """Best-effort parse of a JSON array from an LLM response."""
+    """Best-effort parse of a JSON array from an LLM response.
+
+    Handles markdown fences, surrounding prose, and TRUNCATED responses
+    (free models frequently cut off mid-array). For truncation we repair
+    the trailing unterminated string/array so the valid prefix still parses.
+    """
     text = text.strip()
     # Strip markdown fences if the model wrapped them anyway
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.DOTALL)
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.DOTALL).strip()
+
+    # 1) Direct parse
     try:
         data = json.loads(text)
         if isinstance(data, list):
             return data
     except json.JSONDecodeError:
         pass
-    # Fallback: try to find the first [...] block
+
+    # 2) Find the first [...] block
     match = re.search(r"\[[\s\S]*\]", text)
     if match:
+        block = match.group(0)
         try:
-            data = json.loads(match.group(0))
+            data = json.loads(block)
             if isinstance(data, list):
                 return data
         except json.JSONDecodeError:
             pass
+        # 3) Repair truncated trailing content: cut at the last `}` boundary
+        #    of the longest valid JSON prefix, closing the array if needed.
+        repaired = _repair_truncated_json(block)
+        if repaired is not None:
+            return repaired
+
+    # 4) No closing bracket (heavily truncated) — repair the whole text
+    repaired = _repair_truncated_json(text)
+    if repaired is not None:
+        return repaired
+
     return []
+
+
+def _repair_truncated_json(block: str):
+    """Best-effort repair of a truncated JSON array.
+
+    Strategy: walk back from the end to the last complete object `}`; try
+    closing the array there and parsing. If the truncated tail is a partial
+    next element (common with free models), the prefix up to the last `}`
+    is the maximum recoverable content. Returns the parsed list or None.
+    """
+    block = block.strip()
+    if not block.startswith("["):
+        return None
+
+    for end in range(len(block) - 1, 0, -1):
+        if block[end] == "}":
+            candidate = block[: end + 1]
+            try:
+                data = json.loads(candidate + "]")
+                if isinstance(data, list):
+                    return data
+            except json.JSONDecodeError:
+                continue
+    return None
 
 
 def _extract_code_block(text: str) -> str:
@@ -175,6 +227,20 @@ def _pom_class_name(pom_code: str) -> str:
     return (match.group(1) if match else "PageObject") + ".ts"
 
 
+def docker_available() -> bool:
+    """True if the Docker engine is reachable (docker info succeeds)."""
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -185,6 +251,7 @@ def health() -> dict:
         "status": "ok",
         "node": {"available": node_ok, "detail": node_msg},
         "npm": {"available": npm_available()},
+        "docker": {"available": docker_available()},
     }
 
 
@@ -462,10 +529,63 @@ def generate_tests_stream(req: GenerateRequest) -> StreamingResponse:
         yield _sse({"type": "run_started", "runId": run_id, "phase": 1})
         log.info("PHASE 1 | run=%s | url=%s", run_id, req.url)
         try:
+            # --- Step: Requirement Intelligence (Agent 0) — first stage -----
+            # RI works from the URL + user requirements alone; the page
+            # snapshot (next step) is added later for test case design.
+            yield _sse({
+                "type": "agent_started", "key": "ri",
+                "title": "Requirement Intelligence",
+                "activity": "Converting the URL + requirements into structured intelligence...",
+            })
+            t0 = time.perf_counter()
+            ri_text = run_ri_agent(req.url, req.requirements)
+            _save_run(run_id, "02_requirement_intelligence", ri_text)
+            if _run_stopped(stop_event):
+                yield _sse({"type": "run_stopped", "runId": run_id})
+                return
+            yield _sse({
+                "type": "agent_done", "key": "ri",
+                "detail": f"RI produced ({len(ri_text.splitlines())} lines)",
+                "output": ri_text,
+                "durationMs": _ms(t0),
+            })
+
+            # --- Step: DeepEval coverage of RI vs user input ----------------
+            # Evaluates the RI immediately, before the browser read, so a
+            # weak RI is caught early.
+            yield _sse({
+                "type": "eval_started", "key": "coverage_eval",
+                "title": "Coverage Evaluation · DeepEval",
+                "activity": "Cross-verifying the RI against the user's requirements...",
+            })
+            t0 = time.perf_counter()
+            try:
+                eval_result = evaluate_ri_coverage(
+                    (req.requirements or "Derive requirements from the page snapshot."),
+                    ri_text,
+                )
+                eval_result["durationMs"] = _ms(t0)
+                (RUNS_DIR / run_id / "eval_coverage_eval.json").write_text(
+                    json.dumps(eval_result), encoding="utf-8")
+                yield _sse({"type": "eval_done", "key": "coverage_eval", "result": eval_result})
+            except Exception as exc:
+                log.exception("run=%s | coverage eval failed: %s", run_id, exc)
+                yield _sse({
+                    "type": "eval_failed", "key": "coverage_eval",
+                    "detail": str(exc),
+                })
+
+            if _run_stopped(stop_event):
+                yield _sse({"type": "run_stopped", "runId": run_id})
+                return
+
+            # --- Test Case Generation: read the page, then design cases -----
+            # Reading the URL is part of generating the test cases — it gives
+            # the designer concrete element structure to target.
             yield _sse({
                 "type": "agent_started", "key": "page_reader",
-                "title": "Agent 1 · Page Reader",
-                "activity": "Launching headless Chromium and loading the page...",
+                "title": "Page Reader",
+                "activity": "Launching headless Chromium and loading the page for test case design...",
             })
             t0 = time.perf_counter()
             snapshot = PageReader().snapshot(req.url)
@@ -488,12 +608,13 @@ def generate_tests_stream(req: GenerateRequest) -> StreamingResponse:
                 return
             yield _sse({
                 "type": "agent_started", "key": "test_designer",
-                "title": "Agent 2 · Test Case Designer",
-                "activity": "Analysing the page snapshot and drafting prioritised test cases...",
+                "title": "Test Case Designer",
+                "activity": "Analysing the requirement intelligence + page and drafting prioritised test cases...",
             })
             t0 = time.perf_counter()
-            raw = run_test_case_agent(page_snapshot, req.requirements)
-            _save_run(run_id, "02_test_cases_raw", raw)
+            # Test designer gets RI + the live page snapshot for accuracy
+            raw = run_test_case_agent(ri_text + "\n\n### Page Snapshot\n" + page_snapshot)
+            _save_run(run_id, "03_test_cases_raw", raw)
             if _run_stopped(stop_event):
                 yield _sse({"type": "run_stopped", "runId": run_id})
                 return
@@ -514,9 +635,35 @@ def generate_tests_stream(req: GenerateRequest) -> StreamingResponse:
                           f"({sum(1 for t in test_cases if t.get('priority') == 'P0')} P0)",
                 "durationMs": _ms(t0),
             })
+
+            # --- Step: DeepEval coverage of test cases vs RI ---------------
+            yield _sse({
+                "type": "eval_started", "key": "cases_eval",
+                "title": "Test Case Coverage · DeepEval",
+                "activity": "Cross-verifying the generated test cases against the RI...",
+            })
+            t0 = time.perf_counter()
+            try:
+                eval_result = evaluate_test_cases(
+                    ri_text,
+                    json.dumps(test_cases, indent=2),
+                )
+                eval_result["durationMs"] = _ms(t0)
+                (RUNS_DIR / run_id / "eval_cases_eval.json").write_text(
+                    json.dumps(eval_result), encoding="utf-8")
+                yield _sse({"type": "eval_done", "key": "cases_eval", "result": eval_result})
+            except Exception as exc:
+                log.exception("run=%s | cases eval failed: %s", run_id, exc)
+                yield _sse({"type": "eval_failed", "key": "cases_eval", "detail": str(exc)})
+
             yield _sse({
                 "type": "phase_complete", "phase": 1,
-                "payload": {"run_id": run_id, "test_cases": test_cases, "url": req.url},
+                "payload": {
+                    "run_id": run_id,
+                    "test_cases": test_cases,
+                    "url": req.url,
+                    "ri_text": ri_text,
+                },
             })
             log.info("PHASE 1 DONE | run=%s | %d cases | %.1fs",
                      run_id, len(test_cases), time.perf_counter())
@@ -542,8 +689,12 @@ def automate_stream(req: AutomateRequest) -> StreamingResponse:
         try:
             run_dir = RUNS_DIR / run_id
             page_snapshot = (run_dir / "01_page_snapshot.md").read_text(encoding="utf-8", errors="replace")
+            ri_text = ""
+            ri_path = run_dir / "02_requirement_intelligence.md"
+            if ri_path.exists():
+                ri_text = ri_path.read_text(encoding="utf-8", errors="replace")
             all_cases = _extract_json(
-                (run_dir / "02_test_cases_raw.md").read_text(encoding="utf-8", errors="replace"))
+                (run_dir / "03_test_cases_raw.md").read_text(encoding="utf-8", errors="replace"))
             selected = [tc for tc in all_cases if tc.get("id") in set(req.selected)]
             if _run_stopped(stop_event):
                 yield _sse({"type": "run_stopped", "runId": run_id})
@@ -555,7 +706,7 @@ def automate_stream(req: AutomateRequest) -> StreamingResponse:
 
             yield _sse({
                 "type": "agent_started", "key": "pom_writer",
-                "title": "Agent 3 · POM Writer",
+                "title": "POM Writer",
                 "activity": "Writing a typed TypeScript Page Object Model for the page...",
             })
             t0 = time.perf_counter()
@@ -579,7 +730,7 @@ def automate_stream(req: AutomateRequest) -> StreamingResponse:
 
             yield _sse({
                 "type": "agent_started", "key": "framework_architect",
-                "title": "Agent 4 · Framework Architect",
+                "title": "Framework Architect",
                 "activity": "Generating package.json, configs and the Playwright spec for the selected cases...",
             })
             t0 = time.perf_counter()
@@ -595,6 +746,27 @@ def automate_stream(req: AutomateRequest) -> StreamingResponse:
                 "detail": f"Wrote {len(all_files)} files: {', '.join(all_files)}",
                 "durationMs": _ms(t0),
             })
+
+            # --- Step: DeepEval coverage of automation vs RI + tests --------
+            yield _sse({
+                "type": "eval_started", "key": "automation_eval",
+                "title": "Automation Coverage · DeepEval",
+                "activity": "Cross-verifying the generated framework covers the selected test cases...",
+            })
+            t0 = time.perf_counter()
+            try:
+                eval_result = evaluate_automation(
+                    ri_text or page_snapshot,
+                    f"Files written: {', '.join(all_files)}\n\n{framework_text[:4000]}",
+                )
+                eval_result["durationMs"] = _ms(t0)
+                (RUNS_DIR / run_id / "eval_automation_eval.json").write_text(
+                    json.dumps(eval_result), encoding="utf-8")
+                yield _sse({"type": "eval_done", "key": "automation_eval", "result": eval_result})
+            except Exception as exc:
+                log.exception("run=%s | automation eval failed: %s", run_id, exc)
+                yield _sse({"type": "eval_failed", "key": "automation_eval", "detail": str(exc)})
+
             yield _sse({
                 "type": "phase_complete", "phase": 2,
                 "payload": {
@@ -631,11 +803,27 @@ def run_tests_stream(req: RunTestsRequest) -> StreamingResponse:
                         "message": "No generated framework for this run. Automate test cases first."})
             _unregister_run(run_id)
             return
-        log.info("PHASE 2b | run=%s | running tests", run_id)
+        log.info("PHASE 2b | run=%s | running tests | selected=%d",
+                 run_id, len(req.test_names))
         try:
+            # --- Docker pre-flight: tests need the Docker engine running ----
+            yield _sse({"type": "docker_check"})
+            if not docker_available():
+                yield _sse({
+                    "type": "error",
+                    "message": (
+                        "Docker is not running. Start Docker Desktop on your "
+                        "machine, wait for the engine, then run the tests again."
+                    ),
+                })
+                log.warning("run=%s | docker not available — test run aborted", run_id)
+                _unregister_run(run_id)
+                return
+            yield _sse({"type": "docker_ok"})
+
             lines = []
             ok = False
-            for cmd in TestRunner(output_dir=run_dir)._commands():
+            for cmd in TestRunner(output_dir=run_dir)._commands(req.test_names):
                 if _run_stopped(stop_event):
                     yield _sse({"type": "run_stopped", "runId": run_id})
                     return
@@ -653,12 +841,31 @@ def run_tests_stream(req: RunTestsRequest) -> StreamingResponse:
                     break
             full_output = "\n".join(lines)
             ok = "passed" in full_output.lower() and "failed" not in full_output.lower()
+
+            # Release confidence from all evaluations collected so far
+            eval_results = []
+            for name in ("coverage_eval", "cases_eval", "automation_eval"):
+                p = run_dir / f"eval_{name}.json"
+                if p.exists():
+                    try:
+                        eval_results.append(json.loads(p.read_text(encoding="utf-8")))
+                    except json.JSONDecodeError:
+                        pass
+            confidence = release_confidence(eval_results)
+            yield _sse({
+                "type": "release_score",
+                "score": confidence,
+                "eval_count": len(eval_results),
+                "test_success": ok,
+            })
             yield _sse({
                 "type": "phase_complete", "phase": 3,
                 "payload": {"run_id": run_id, "success": ok,
-                            "output": full_output[-6000:]},
+                            "output": full_output[-6000:],
+                            "release_score": confidence},
             })
-            log.info("PHASE 2b DONE | run=%s | %s", run_id, "PASSED" if ok else "FAILED")
+            log.info("PHASE 2b DONE | run=%s | %s | release=%.2f",
+                     run_id, "PASSED" if ok else "FAILED", confidence)
         except Exception as exc:
             log.exception("PHASE 2b FAILED | run=%s | %s", run_id, exc)
             yield _sse({"type": "error", "message": str(exc)})

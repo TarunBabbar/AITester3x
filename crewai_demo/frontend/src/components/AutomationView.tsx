@@ -1,162 +1,171 @@
 "use client";
 
-import { useState } from "react";
-import { OutputFile } from "@/lib/api";
-import { Card, CardTitle } from "@/components/shared";
+import { useMemo, useState } from "react";
+import { AgentRow, EvalRow, OutputFile } from "@/lib/api";
+import { Card, CardTitle, EvalCard, Stage, StageStepper, AgentRowView } from "@/components/shared";
+
+// Test Automation pipeline stages: POM -> Framework -> Eval
+const AUTOMATION_STAGES: Stage[] = [
+  { key: 3, label: "POM", agent: "pom_writer" },
+  { key: 4, label: "Framework", agent: "framework_architect" },
+  { key: 5, label: "Eval", agent: "automation_eval" },
+];
 
 /**
- * Test Automation — the third view. Shows the generated POM, the framework
- * files, and runs the tests. Reached after the user automates selected test
- * cases.
+ * Group files into a folder-tree: { folderName: [files] }.
+ * Files at the root of the run folder land under "(root)".
+ * Folders keep their relative path (e.g. "tests/e2e", "pages/login").
+ */
+function groupFilesByDir(files: OutputFile[], runId: string): Record<string, OutputFile[]> {
+  const groups: Record<string, OutputFile[]> = {};
+  for (const f of files) {
+    const rel = f.name.startsWith(`${runId}/`) ? f.name.slice(runId.length + 1) : f.name;
+    const parts = rel.split("/");
+    const folder = parts.length > 1 ? parts.slice(0, -1).join("/") : "(root)";
+    if (!groups[folder]) groups[folder] = [];
+    groups[folder].push({ ...f, name: parts[parts.length - 1] });
+  }
+  return groups;
+}
+
+/**
+ * Test Automation — third view. Shows the POM -> Framework -> Eval pipeline,
+ * the automation agents, the DeepEval automation coverage, and the generated
+ * POM + framework files (folder tree). Running tests and the release report
+ * live on the Test Run & Report view.
  */
 export default function AutomationView({
   runId,
-  pomCode,
   frameworkFiles,
-  commands,
-  runOutput,
-  runSuccess,
-  busy,
-  phaseLabel,
-  onRunTests,
-  onStop,
+  agents,
+  evals,
 }: {
   runId: string;
-  pomCode: string;
   frameworkFiles: OutputFile[];
-  commands: import("@/lib/api").CommandRow[];
-  runOutput: string;
-  runSuccess: boolean | null;
-  busy: boolean;
-  phaseLabel: string;
-  onRunTests: () => void;
-  onStop: () => void;
+  agents: AgentRow[];
+  evals: EvalRow[];
 }) {
-  const [tab, setTab] = useState<"pom" | "files" | "run">("pom");
-  const anyCommandRunning = commands.some((c) => c.state === "running");
+  // Folders open by default so the tree is visible on first load
+  const [openFolders, setOpenFolders] = useState<Set<string> | null>(null);
+
+  const groups = useMemo(() => groupFilesByDir(frameworkFiles, runId), [frameworkFiles, runId]);
+
+  const isOpen = (folder: string) => openFolders === null || openFolders.has(folder);
+
+  const toggleFolder = (folder: string) =>
+    setOpenFolders((prev) => {
+      const base = prev === null ? new Set(Object.keys(groups)) : new Set(prev);
+      if (base.has(folder)) base.delete(folder);
+      else base.add(folder);
+      return base;
+    });
+
+  const fileCount = frameworkFiles.length;
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight">Test Automation</h1>
-          <p className="mt-0.5 text-sm text-ink-soft">
-            {runId
-              ? `Run ${runId} · output/${runId}/`
-              : "Automate test cases to generate the framework."}
-          </p>
-        </div>
-        {anyCommandRunning && (
-          <button
-            onClick={onStop}
-            className="shrink-0 rounded-lg border border-err/40 bg-err-soft px-4 py-2 text-sm font-semibold text-err transition hover:bg-err/20"
-          >
-            ■ Stop
-          </button>
-        )}
+      <div>
+        <h1 className="text-xl font-bold tracking-tight">Test Automation</h1>
+        <p className="mt-0.5 text-sm text-ink-soft">
+          {runId
+            ? `Run ${runId} · output/${runId}/`
+            : "Automate test cases to generate the framework. Run them on the Test Run & Report view."}
+        </p>
       </div>
 
-      {commands.length > 0 && (
+      {/* Stepper — always visible */}
+      <Card>
+        <div className="px-5 py-4">
+          <StageStepper stages={AUTOMATION_STAGES} agents={agents} evals={evals} commands={[]} />
+        </div>
+      </Card>
+
+      {/* Automation agents */}
+      <Card>
+        <CardTitle step="⌁" title="Crew at work" subtitle="Live status of the automation agents" />
+        <div className="px-5 py-4">
+          <ol className="flex flex-col gap-2">
+            {agents.map((row) => (
+              <AgentRowView key={row.key} row={row} />
+            ))}
+          </ol>
+        </div>
+      </Card>
+
+      {/* DeepEval automation coverage */}
+      {evals.length > 0 && (
         <Card>
-          <CardTitle step="⌁" title="Running tests" subtitle={phaseLabel} />
+          <CardTitle step="◎" title="Automation Evaluation" subtitle="DeepEval cross-verification" />
           <div className="px-5 py-4">
             <ol className="flex flex-col gap-2">
-              {commands.map((row, i) => (
-                <li
-                  key={`${row.command}-${i}`}
-                  className="flex items-center justify-between gap-3 rounded-lg border border-line bg-inset px-3.5 py-2.5 font-mono text-xs"
-                >
-                  <span className="min-w-0 truncate text-ink-soft">
-                    <span className="text-accent">$</span> {row.command}
-                  </span>
-                  <span
-                    className={`shrink-0 ${
-                      row.state === "done"
-                        ? row.exitCode === 0
-                          ? "text-ok"
-                          : "text-err"
-                        : "text-warn"
-                    }`}
-                  >
-                    {row.state === "done"
-                      ? `exit ${row.exitCode} · ${((row.durationMs ?? 0) / 1000).toFixed(1)}s`
-                      : "running…"}
-                  </span>
-                </li>
+              {evals.map((row) => (
+                <EvalCard key={row.key} row={row} />
               ))}
             </ol>
           </div>
         </Card>
       )}
 
-      {pomCode && (
-        <Card>
-          <CardTitle step="3" title="Generated automation" subtitle={`Run ${runId}`} />
-          <div className="px-5 py-4">
-            <div className="mb-3.5 flex gap-2">
-              {(["pom", "files", "run"] as const).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setTab(t)}
-                  className={`rounded-md border px-3 py-1.5 text-xs font-medium transition ${
-                    tab === t
-                      ? "border-accent bg-accent text-white"
-                      : "border-line bg-inset text-ink-soft hover:border-accent/40"
-                  }`}
-                >
-                  {t === "pom" ? "Page Object Model" : t === "files" ? "Framework Files" : "Test Run"}
-                </button>
-              ))}
+      {/* Generated framework — folder tree (default content) */}
+      <Card>
+        <CardTitle
+          step="3"
+          title="Generated automation"
+          subtitle={
+            fileCount > 0
+              ? `${fileCount} files · output/${runId}/`
+              : "Nothing generated yet — automate test cases first."
+          }
+        />
+        <div className="px-5 py-4">
+          {Object.keys(groups).length > 0 ? (
+            <div className="flex flex-col gap-2">
+              {Object.entries(groups).map(([folder, files]) => {
+                const isRoot = folder === "(root)";
+                const open = isOpen(folder);
+                return (
+                  <div key={folder} className="rounded-lg border border-line bg-inset">
+                    {/* Folder header */}
+                    <button
+                      onClick={() => toggleFolder(folder)}
+                      className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left font-mono text-xs font-semibold text-accent"
+                    >
+                      <span className="text-ink-soft">{open ? "▾" : "▸"}</span>
+                      <span className="truncate">
+                        {isRoot ? "output/" : folder + "/"}
+                      </span>
+                      <span className="ml-auto shrink-0 text-[10px] font-normal text-ink-soft">
+                        {files.length} file{files.length === 1 ? "" : "s"}
+                      </span>
+                    </button>
+                    {open && (
+                      <div className="flex flex-col border-t border-line">
+                        {files.map((f) => (
+                          <details key={f.name} className="border-b border-line/60 last:border-b-0">
+                            <summary className="cursor-pointer px-3.5 py-2 font-mono text-xs text-ink-soft hover:text-ink">
+                              {f.name}
+                            </summary>
+                            <pre className="max-h-72 overflow-auto border-t border-line p-3.5 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+                              {f.content}
+                            </pre>
+                          </details>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-
-            {tab === "pom" && (
-              <pre className="max-h-[26rem] overflow-auto rounded-lg border border-line bg-inset p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap">
-                {pomCode.replace(/```(typescript)?/g, "").trim()}
-              </pre>
-            )}
-
-            {tab === "files" && (
-              <div className="flex flex-col gap-2.5">
-                {frameworkFiles.map((f) => (
-                  <details key={f.name} className="rounded-lg border border-line bg-inset">
-                    <summary className="cursor-pointer px-3.5 py-2.5 font-mono text-xs font-semibold text-accent">
-                      {f.name.replace(`${runId}/`, "")}
-                    </summary>
-                    <pre className="max-h-72 overflow-auto border-t border-line p-3.5 font-mono text-xs leading-relaxed whitespace-pre-wrap">
-                      {f.content}
-                    </pre>
-                  </details>
-                ))}
-              </div>
-            )}
-
-            {tab === "run" && (
-              <div className="flex flex-col gap-3">
-                <button
-                  onClick={onRunTests}
-                  disabled={busy}
-                  className="self-start rounded-lg bg-ok px-5 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
-                >
-                  {busy && phaseLabel.includes("Phase 2b") ? "Running…" : "▶ Run Tests"}
-                </button>
-                {runOutput && (
-                  <pre
-                    className={`max-h-[26rem] overflow-auto rounded-lg border p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap ${
-                      runSuccess === true
-                        ? "border-ok/30 bg-ok-soft"
-                        : runSuccess === false
-                          ? "border-err/30 bg-err-soft"
-                          : "border-line bg-inset"
-                    }`}
-                  >
-                    {runOutput}
-                  </pre>
-                )}
-              </div>
-            )}
-          </div>
-        </Card>
-      )}
+          ) : (
+            <p className="text-sm text-ink-soft">
+              No framework files yet. Select test cases in Test Case Generation and click Automate
+              Selected — the generated folders and files (config, pages, tests/e2e, helpers) will
+              appear here.
+            </p>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }
+

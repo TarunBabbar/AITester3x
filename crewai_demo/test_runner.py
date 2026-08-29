@@ -16,6 +16,7 @@ The command runs in a subprocess so long test runs never block the API.
 
 import logging
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -117,8 +118,12 @@ class TestRunner:
             "log_file": str(log_file),
         }
 
-    def _commands(self) -> list[str]:
-        """Build the command sequence for this environment."""
+    def _commands(self, test_names: list[str] | None = None) -> list[str]:
+        """Build the command sequence for this environment.
+
+        test_names: optional list of test titles to run. Passed to
+        Playwright as -g (grep) so only the selected tests execute.
+        """
         commands: list[str] = []
         if self.auto_install:
             # --include=dev overrides a global "omit=dev" npm config so
@@ -126,7 +131,12 @@ class TestRunner:
             commands.append("npm install --include=dev")
         if self.browser_install:
             commands.append("npx playwright install chromium")
-        commands.append("npx playwright test --reporter=list")
+        run_cmd = "npx playwright test --reporter=list"
+        if test_names:
+            # Regex matching any of the selected test titles
+            pattern = "|".join(re.escape(n) for n in test_names)
+            run_cmd += f' -g "{pattern}"'
+        commands.append(run_cmd)
         return commands
 
 

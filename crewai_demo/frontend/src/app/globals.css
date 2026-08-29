@@ -1,23 +1,23 @@
 @import "tailwindcss";
 
 @theme {
-  /* Modern dark SaaS palette (Linear/Vercel-inspired) */
-  --color-bg: #0b0f19;         /* page background */
-  --color-panel: #111827;      /* cards */
-  --color-inset: #0e1526;      /* inner panels / code blocks */
-  --color-line: #1f2a3d;       /* borders */
-  --color-line-soft: #182234;  /* subtle borders */
-  --color-ink: #e6ebf4;        /* primary text */
-  --color-ink-soft: #8b96ad;   /* muted text */
-  --color-accent: #6366f1;     /* indigo */
-  --color-accent-deep: #4f46e5;
-  --color-accent-soft: rgba(99, 102, 241, 0.14);
-  --color-ok: #10b981;         /* emerald */
-  --color-ok-soft: rgba(16, 185, 129, 0.12);
-  --color-warn: #f59e0b;       /* amber */
-  --color-warn-soft: rgba(245, 158, 11, 0.12);
-  --color-err: #ef4444;        /* red */
-  --color-err-soft: rgba(239, 68, 68, 0.12);
+  /* Claude-style warm beige palette */
+  --color-bg: #f4efe6;         /* page background — warm cream */
+  --color-panel: #faf7f0;      /* cards — lighter cream */
+  --color-inset: #efe9dd;      /* inner panels / code blocks */
+  --color-line: #e0d8c8;       /* borders — warm sand */
+  --color-line-soft: #e9e2d4;  /* subtle borders */
+  --color-ink: #3d382f;        /* primary text — dark warm brown */
+  --color-ink-soft: #8a8272;   /* muted text */
+  --color-accent: #b0602f;     /* terracotta accent (Claude orange) */
+  --color-accent-deep: #96491f;
+  --color-accent-soft: rgba(176, 96, 47, 0.12);
+  --color-ok: #2e7d5b;         /* deep green */
+  --color-ok-soft: rgba(46, 125, 91, 0.12);
+  --color-warn: #b37a1f;       /* amber */
+  --color-warn-soft: rgba(179, 122, 31, 0.14);
+  --color-err: #b3372c;        /* red */
+  --color-err-soft: rgba(179, 55, 44, 0.12);
 
   --font-body: var(--font-inter), system-ui, -apple-system, sans-serif;
   --font-mono: "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, monospace;
@@ -29,18 +29,17 @@ body {
   font-family: var(--font-body);
 }
 
-/* Subtle radial glow behind the page */
+/* Subtle warm glow behind the page */
 .page-glow {
   background:
-    radial-gradient(700px 300px at 15% -5%, rgba(99, 102, 241, 0.12), transparent 65%),
-    radial-gradient(600px 260px at 90% 0%, rgba(16, 185, 129, 0.07), transparent 60%),
+    radial-gradient(700px 300px at 15% -5%, rgba(176, 96, 47, 0.07), transparent 65%),
     var(--color-bg);
 }
 
 /* Live pulse dot for running agents */
 @keyframes live-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5); }
-  50%      { box-shadow: 0 0 0 5px rgba(245, 158, 11, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(179, 122, 31, 0.5); }
+  50%      { box-shadow: 0 0 0 5px rgba(179, 122, 31, 0); }
 }
 .live-dot {
   animation: live-pulse 1.4s ease-in-out infinite;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { AgentRow, CommandRow } from "@/lib/api";
+import type { AgentRow, CommandRow, EvalRow } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Shared UI building blocks
@@ -21,6 +21,50 @@ export function CardTitle({ step, title, subtitle }: { step: string; title: stri
         {subtitle && <p className="text-xs text-ink-soft">{subtitle}</p>}
       </div>
     </div>
+  );
+}
+
+// DeepEval metric card — score, status, reasoning
+export function EvalCard({ row }: { row: EvalRow }) {
+  const running = row.state === "running";
+  const score = row.result?.score;
+  return (
+    <li className="flex items-start gap-3 rounded-lg border border-accent/30 bg-accent-soft/20 px-3.5 py-3">
+      <span
+        className={`mt-0.5 size-2.5 shrink-0 rounded-full ${
+          running ? "live-dot bg-warn" : row.state === "done" ? "bg-ok" : "bg-err"
+        }`}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-medium">{row.title}</p>
+          {score !== undefined && (
+            <span
+              className={`shrink-0 rounded-md border px-2 py-0.5 font-mono text-xs font-bold ${
+                score >= 0.7
+                  ? "border-ok/40 bg-ok-soft text-ok"
+                  : "border-err/40 bg-err-soft text-err"
+              }`}
+            >
+              {(score * 100).toFixed(0)}%
+            </span>
+          )}
+        </div>
+        <p className={`mt-0.5 text-xs ${running ? "animate-pulse text-warn" : "text-ink-soft"}`}>
+          {running
+            ? row.activity
+            : row.state === "failed"
+              ? row.result?.reason || "Evaluation failed"
+              : row.result?.reason || row.activity}
+        </p>
+        {score !== undefined && row.result?.durationMs !== undefined && (
+          <p className="mt-0.5 font-mono text-[10px] text-ink-soft">
+            {row.result.status === "passed" ? "PASSED" : "FAILED"} ·{" "}
+            {(row.result.durationMs / 1000).toFixed(1)}s
+          </p>
+        )}
+      </div>
+    </li>
   );
 }
 
@@ -45,6 +89,8 @@ export function StatusDot({ state }: { state: AgentRow["state"] }) {
     return <span className="mt-0.5 block size-2.5 shrink-0 rounded-full bg-ok" />;
   if (state === "failed")
     return <span className="mt-0.5 block size-2.5 shrink-0 rounded-full bg-err" />;
+  if (state === "queued")
+    return <span className="mt-0.5 block size-2.5 shrink-0 rounded-full bg-ink-soft/50" />;
   return <span className="mt-0.5 block size-2.5 shrink-0 rounded-full bg-line" />;
 }
 
@@ -66,9 +112,14 @@ export function AgentRowView({ row, output }: { row: AgentRow; output?: string }
       <StatusDot state={row.state} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-3">
-          <p className={`text-sm font-medium ${row.state === "idle" ? "text-ink-soft" : ""}`}>
+          <p className={`text-sm font-medium ${row.state === "idle" || row.state === "queued" ? "text-ink-soft" : ""}`}>
             {row.title}
           </p>
+          {row.state === "queued" && (
+            <span className="shrink-0 rounded border border-line bg-inset px-1.5 py-0.5 font-mono text-[10px] text-ink-soft">
+              queued
+            </span>
+          )}
           {row.durationMs !== undefined && (
             <span className="shrink-0 font-mono text-[11px] text-ink-soft">
               {(row.durationMs / 1000).toFixed(1)}s
@@ -84,7 +135,9 @@ export function AgentRowView({ row, output }: { row: AgentRow; output?: string }
                 ? "text-err"
                 : row.state === "done"
                   ? "text-ink-soft"
-                  : "text-ink-soft/70"
+                  : row.state === "queued"
+                    ? "text-ink-soft/60"
+                    : "text-ink-soft/70"
           }`}
         >
           {row.state === "done" || row.state === "failed" ? row.detail : row.activity}
@@ -96,7 +149,7 @@ export function AgentRowView({ row, output }: { row: AgentRow; output?: string }
             <summary className="cursor-pointer font-mono text-[11px] text-accent">
               show output
             </summary>
-            <pre className="mt-1.5 max-h-60 overflow-auto rounded-md border border-line bg-[#070b12] p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
+            <pre className="mt-1.5 max-h-60 overflow-auto rounded-md border border-line bg-panel p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-ink/80">
               {output}
             </pre>
           </details>
@@ -128,7 +181,7 @@ export function CommandRowView({ row }: { row: CommandRow }) {
 
 export function TerminalBlock({ commands }: { commands: CommandRow[] }) {
   return (
-    <div className="rounded-lg border border-line bg-[#070b12]">
+    <div className="rounded-lg border border-line bg-panel">
       <div className="flex items-center gap-1.5 border-b border-line px-3.5 py-2">
         <span className="size-2 rounded-full bg-err/70" />
         <span className="size-2 rounded-full bg-warn/70" />
@@ -144,8 +197,12 @@ export function TerminalBlock({ commands }: { commands: CommandRow[] }) {
   );
 }
 
-// Horizontal stage stepper: Read -> Cases -> POM -> Framework -> Run
-export const STAGES: { key: number; label: string; agent: string | null }[] = [
+// Horizontal stage stepper. Different views show different stages:
+//   Pipeline:   Read -> Cases
+//   Automation: POM -> Framework -> Run
+export type Stage = { key: number; label: string; agent: string | null };
+
+export const STAGES: Stage[] = [
   { key: 1, label: "Read", agent: "page_reader" },
   { key: 2, label: "Cases", agent: "test_designer" },
   { key: 3, label: "POM", agent: "pom_writer" },
@@ -153,17 +210,31 @@ export const STAGES: { key: number; label: string; agent: string | null }[] = [
   { key: 5, label: "Run", agent: null },
 ];
 
-export function StageStepper({ agents, commands }: { agents: AgentRow[]; commands: CommandRow[] }) {
-  const stateOf = (agentKey: string | null): AgentRow["state"] => {
+export function StageStepper({
+  stages,
+  agents,
+  evals,
+  commands,
+}: {
+  stages: Stage[];
+  agents: AgentRow[];
+  evals?: EvalRow[];
+  commands: CommandRow[];
+}) {
+  const stateOf = (agentKey: string | null): AgentRow["state"] | EvalRow["state"] => {
     if (!agentKey) {
       if (commands.some((c) => c.state === "running")) return "running";
       if (commands.length > 0) return "done";
       return "idle";
     }
+    // Eval stages resolve from the evals list; agent stages from agents
+    if (evals?.some((e) => e.key === agentKey)) {
+      return evals.find((e) => e.key === agentKey)!.state;
+    }
     return agents.find((a) => a.key === agentKey)?.state ?? "idle";
   };
 
-  const dot = (state: AgentRow["state"]) =>
+  const dot = (state: string) =>
     state === "running" ? (
       <span className="live-dot mx-auto block size-3 rounded-full bg-warn" />
     ) : state === "done" ? (
@@ -176,7 +247,7 @@ export function StageStepper({ agents, commands }: { agents: AgentRow[]; command
 
   return (
     <div className="flex items-start">
-      {STAGES.map((stage, i) => {
+      {stages.map((stage, i) => {
         const st = stateOf(stage.agent);
         return (
           <div key={stage.key} className="flex flex-1 items-start">
@@ -196,7 +267,7 @@ export function StageStepper({ agents, commands }: { agents: AgentRow[]; command
                 {stage.label}
               </span>
             </div>
-            {i < STAGES.length - 1 && <div className="mt-[5px] h-px flex-1 bg-line" />}
+            {i < stages.length - 1 && <div className="mt-[5px] h-px flex-1 bg-line" />}
           </div>
         );
       })}

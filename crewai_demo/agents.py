@@ -41,33 +41,45 @@ log = logging.getLogger(__name__)
 #
 # Shared settings (temperature, max tokens, timeout) apply to both.
 # ---------------------------------------------------------------------------
-def _commandcode_key() -> str | None:
-    """Command Code API key — read strictly from .env (CMD_API_KEY)."""
-    return os.getenv("CMD_API_KEY")
-
-
 def _active_provider() -> tuple[str, str, str | None, str]:
-    """Return (provider, model, api_key, base_url) from .env."""
-    provider = os.getenv("LLM_PROVIDER", "openrouter").lower().strip()
+    """Return (provider, model, api_key, base_url) from .env.
+
+    All values (provider, model, key, base URL) come strictly from .env —
+    no hardcoded fallbacks. Missing values surface an error at LLM build
+    time instead of silently using defaults.
+    """
+    provider = (os.getenv("LLM_PROVIDER") or "").lower().strip()
 
     if provider == "commandcode":
         return (
             "commandcode",
-            os.getenv("CMD_MODEL", "deepseek/deepseek-v4-flash"),
-            _commandcode_key(),
-            os.getenv("CMD_BASE_URL", "https://api.commandcode.ai/provider/v1"),
+            os.getenv("CMD_MODEL", ""),
+            os.getenv("CMD_API_KEY"),
+            os.getenv("CMD_BASE_URL", ""),
         )
 
-    return (
-        "openrouter",
-        os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-nano-9b-v2:free"),
-        os.getenv("OPENROUTER_API_KEY"),
-        os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+    if provider == "openrouter":
+        return (
+            "openrouter",
+            os.getenv("OPENROUTER_MODEL", ""),
+            os.getenv("OPENROUTER_API_KEY"),
+            os.getenv("OPENROUTER_BASE_URL", ""),
+        )
+
+    raise ValueError(
+        f"LLM_PROVIDER must be 'openrouter' or 'commandcode' in .env (got {provider!r})"
     )
 
 
 def build_llm() -> LLM:
     provider, model, api_key, base_url = _active_provider()
+
+    if not model or not api_key or not base_url:
+        raise ValueError(
+            f"Missing LLM config in .env for provider {provider!r}: "
+            "model, API key and base URL must all be set."
+        )
+
     log.info("Building LLM: provider=%s model=%s base_url=%s", provider, model, base_url)
 
     extra: dict = {}
@@ -85,7 +97,6 @@ def build_llm() -> LLM:
         timeout=int(os.getenv("OPENROUTER_TIMEOUT_MS", "180000")),
         **extra,
     )
-
 
 _LLM_CACHE: LLM | None = None
 
@@ -105,8 +116,32 @@ def _verbose() -> bool:
     return os.getenv("AGENT_VERBOSE", "false").lower() == "true"
 
 
+def build_ri_agent():
+    """Agent 0: turns the raw requirement into structured Requirement
+    Intelligence (acceptance criteria, edge cases, risks)."""
+    return Agent(
+        role=os.getenv(
+            "RI_AGENT_ROLE",
+            "Requirements Analyst",
+        ),
+        goal=os.getenv(
+            "RI_AGENT_GOAL",
+            "Transform the raw user requirement and page snapshot into "
+            "structured Requirement Intelligence: goals, acceptance criteria, "
+            "edge cases, and risks.",
+        ),
+        backstory=os.getenv(
+            "RI_AGENT_BACKSTORY",
+            "You are a senior business analyst and QA strategist who turns "
+            "vague feature requests into precise, testable requirements.",
+        ),
+        llm=get_llm(),
+        verbose=_verbose(),
+    )
+
+
 def build_test_case_agent():
-    """Agent 2: turns a page snapshot into prioritised test cases."""
+    """Agent 2: turns Requirement Intelligence into prioritised test cases."""
     return Agent(
         role=os.getenv(
             "TEST_AGENT_ROLE",
@@ -114,9 +149,9 @@ def build_test_case_agent():
         ),
         goal=os.getenv(
             "TEST_AGENT_GOAL",
-            "Analyse the page snapshot and produce clear, prioritised "
-            "(P0-P3) test cases covering happy path, edge cases, negative "
-            "scenarios and accessibility basics.",
+            "Analyse the requirement intelligence and produce clear, "
+            "prioritised (P0-P3) test cases covering happy path, edge cases, "
+            "negative scenarios and accessibility basics.",
         ),
         backstory=os.getenv(
             "TEST_AGENT_BACKSTORY",
@@ -179,12 +214,36 @@ def build_framework_agent():
 # ---------------------------------------------------------------------------
 # Step 2 - Tasks
 # ---------------------------------------------------------------------------
-def build_test_case_task(agent, page_snapshot: str, extra_requirements: str) -> Task:
+def build_ri_task(agent, url: str, extra_requirements: str) -> Task:
     return Task(
         description=(
-            "Analyse the page snapshot below and create 8-12 test cases.\n\n"
-            f"### Page Snapshot\n{page_snapshot}\n\n"
-            f"### Extra Requirements\n{extra_requirements or 'None provided.'}\n\n"
+            "Analyse the application at the given URL and the user's extra "
+            "requirements, then produce structured Requirement Intelligence "
+            "(RI).\n\n"
+            f"### Application URL\n{url}\n\n"
+            f"### User Requirements\n{extra_requirements or 'None provided — derive from the URL.'}\n\n"
+            "Produce, as structured markdown:\n"
+            "- Goals: what the page/feature must accomplish\n"
+            "- Acceptance criteria: concrete, testable conditions\n"
+            "- Edge cases and negative scenarios\n"
+            "- Risks and dependencies\n\n"
+            "Be precise and exhaustive — the next stage (test case design) "
+            "and a DeepEval coverage check both rely on this output."
+        ),
+        expected_output=(
+            "Structured markdown with sections: Goals, Acceptance Criteria, "
+            "Edge Cases, Risks."
+        ),
+        agent=agent,
+    )
+
+
+def build_test_case_task(agent, ri_text: str) -> Task:
+    return Task(
+        description=(
+            "Using the Requirement Intelligence below, create test cases "
+            "that cover every acceptance criterion and edge case.\n\n"
+            f"### Requirement Intelligence\n{ri_text}\n\n"
             "Classify each test case by priority (P0, P1, P2, P3).\n\n"
             "IMPORTANT: Return ONLY a valid JSON array, no markdown fences, "
             "no commentary. Each element must be exactly:\n"
@@ -277,10 +336,22 @@ def _kickoff(crew: Crew, agent_label: str) -> str:
         raise
 
 
-def run_test_case_agent(page_snapshot: str, extra_requirements: str) -> str:
+def run_ri_agent(url: str, extra_requirements: str) -> str:
+    """Run Agent 0 (requirement intelligence) and return the RI markdown."""
+    agent = build_ri_agent()
+    task = build_ri_task(agent, url, extra_requirements)
+    crew = Crew(
+        agents=[agent],
+        tasks=[task],
+        verbose=os.getenv("CREW_VERBOSE", "false").lower() == "true",
+    )
+    return _kickoff(crew, "Agent 0 (Requirement Intelligence)")
+
+
+def run_test_case_agent(ri_text: str) -> str:
     """Run Agent 2 (test case designer) and return its JSON array output."""
     agent = build_test_case_agent()
-    task = build_test_case_task(agent, page_snapshot, extra_requirements)
+    task = build_test_case_task(agent, ri_text)
     crew = Crew(
         agents=[agent],
         tasks=[task],

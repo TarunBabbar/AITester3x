@@ -11,7 +11,7 @@ export interface AgentRow {
   key: string;
   title: string;
   activity: string;
-  state: "idle" | "running" | "done" | "failed";
+  state: "idle" | "queued" | "running" | "done" | "failed";
   detail?: string;
   durationMs?: number;
   startedAt?: number; // epoch ms — set when the agent flips to running
@@ -24,6 +24,22 @@ export interface TestCase {
   preconditions: string;
   steps: string[];
   expected: string;
+}
+
+export interface EvalResult {
+  metric: string;
+  score: number;
+  status: string; // passed | failed
+  reason?: string;
+  durationMs?: number;
+}
+
+export interface EvalRow {
+  key: string;
+  title: string;
+  activity: string;
+  state: "running" | "done" | "failed";
+  result?: EvalResult;
 }
 
 export interface CommandRow {
@@ -40,10 +56,16 @@ export interface PipelineEvent {
     | "agent_activity"
     | "agent_done"
     | "agent_failed"
+    | "eval_started"
+    | "eval_done"
+    | "eval_failed"
     | "command_started"
     | "command_done"
     | "phase_complete"
     | "run_stopped"
+    | "docker_check"
+    | "docker_ok"
+    | "release_score"
     | "error";
   runId?: string;
   phase?: number;
@@ -52,9 +74,14 @@ export interface PipelineEvent {
   activity?: string;
   detail?: string;
   durationMs?: number;
+  output?: string;
   command?: string;
   exitCode?: number;
   message?: string;
+  result?: EvalResult;
+  score?: number;
+  evalCount?: number;
+  testSuccess?: boolean;
   payload?: Record<string, unknown>;
 }
 
@@ -62,6 +89,7 @@ export interface Health {
   status: string;
   node: { available: boolean; detail: string };
   npm: { available: boolean };
+  docker?: { available: boolean };
 }
 
 export interface OutputFile {
