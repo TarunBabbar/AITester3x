@@ -107,6 +107,7 @@ function CommandRowView({ row }: { row: CommandRow }) {
 export default function Home() {
   // config
   const [health, setHealth] = useState<Health | null>(null);
+  const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
 
   // phase 1 inputs
@@ -146,7 +147,12 @@ export default function Home() {
 
   useEffect(() => {
     getHealth().then(setHealth).catch(() => setHealth(null));
-    getConfig().then((c) => setModel(c.model)).catch(() => {});
+    getConfig()
+      .then((c) => {
+        setProvider(c.provider);
+        setModel(c.model);
+      })
+      .catch(() => {});
   }, []);
 
   const upsertAgent = useCallback((patch: Partial<AgentRow> & { key: string }) => {
@@ -324,7 +330,7 @@ export default function Home() {
           <div className="flex items-center gap-2 text-xs">
             {model && (
               <span className="hidden rounded-full border border-line bg-card-soft px-3 py-1 font-mono text-ink-soft sm:inline">
-                {model}
+                {provider} · {model}
               </span>
             )}
             <span
@@ -541,7 +547,8 @@ export default function Home() {
       </main>
 
       <footer className="py-8 text-center text-xs text-ink-soft">
-        CrewAI QA Studio · 4 agents on {model || "an OpenRouter model"} · config in .env
+        CrewAI QA Studio · 4 agents on {provider ? `${provider} / ` : ""}
+        {model || "an LLM"} · switch provider in .env
       </footer>
     </div>
   );

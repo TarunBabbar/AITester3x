@@ -75,7 +75,7 @@ export async function getHealth(): Promise<Health> {
   return res.json();
 }
 
-export async function getConfig(): Promise<{ model: string }> {
+export async function getConfig(): Promise<{ provider: string; model: string }> {
   const res = await fetch(`${API_BASE}/api/config`);
   return res.json();
 }

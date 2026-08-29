@@ -83,6 +83,27 @@ OPENROUTER_API_KEY=sk-or-v1-...
 OPENROUTER_MODEL=minimax/minimax-m3:free
 ```
 
+### Choosing the LLM provider
+
+Two providers are supported — pick one with `LLM_PROVIDER` in `.env`:
+
+| `LLM_PROVIDER` | Key + model used | Notes |
+| --- | --- | --- |
+| `openrouter` (default) | `OPENROUTER_API_KEY` + `OPENROUTER_MODEL` | Any model on OpenRouter, free tier available |
+| `commandcode` | `CMD_API_KEY` + `CMD_MODEL` | Command Code's own endpoint (`deepseek/deepseek-v4-flash` by default) |
+
+To use Command Code's DeepSeek Flash:
+
+```env
+LLM_PROVIDER=commandcode
+CMD_API_KEY=your_command_code_api_key
+CMD_MODEL=deepseek/deepseek-v4-flash
+```
+
+Both providers are OpenAI-compatible and share the same temperature /
+max-token / timeout settings. The active provider + model are shown in the
+UI header. Restart the backend after changing `.env`.
+
 > The model is fully configurable. `minimax/minimax-m3:free` is verified
 > working and gives clean output. Swap in `anthropic/claude-3.5-sonnet`,
 > `openai/gpt-4o-mini`, or any model OpenRouter exposes for better code

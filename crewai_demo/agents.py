@@ -30,17 +30,44 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Step 0 - The Brain (OpenRouter LLM)
+# Step 0 - The Brain (OpenRouter OR Command Code, selected via .env)
 #
-# OpenRouter exposes an OpenAI-compatible API, so we use the "openai/"
-# provider prefix with a custom base_url. Model, key, temperature and
-# token limits all come from .env — nothing is hardcoded.
+# Both providers expose an OpenAI-compatible chat/completions API, so both
+# work through CrewAI's LLM with the "openai/" provider prefix and a custom
+# base_url. LLM_PROVIDER in .env picks which one the agents use:
+#
+#   LLM_PROVIDER=openrouter    -> OPENROUTER_API_KEY + OPENROUTER_MODEL
+#   LLM_PROVIDER=commandcode   -> CMD_API_KEY + CMD_MODEL
+#
+# Shared settings (temperature, max tokens, timeout) apply to both.
 # ---------------------------------------------------------------------------
+def _active_provider() -> tuple[str, str, str | None, str]:
+    """Return (provider, model, api_key, base_url) from .env."""
+    provider = os.getenv("LLM_PROVIDER", "openrouter").lower().strip()
+
+    if provider == "commandcode":
+        return (
+            "commandcode",
+            os.getenv("CMD_MODEL", "deepseek/deepseek-v4-flash"),
+            os.getenv("CMD_API_KEY"),
+            os.getenv("CMD_BASE_URL", "https://api.commandcode.ai/provider/v1"),
+        )
+
+    return (
+        "openrouter",
+        os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-nano-9b-v2:free"),
+        os.getenv("OPENROUTER_API_KEY"),
+        os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+    )
+
+
 def build_llm() -> LLM:
+    provider, model, api_key, base_url = _active_provider()
+    log.info("Building LLM: provider=%s model=%s base_url=%s", provider, model, base_url)
     return LLM(
-        model=f"openai/{os.getenv('OPENROUTER_MODEL', 'nvidia/nemotron-nano-9b-v2:free')}",
-        api_key=os.getenv("OPENROUTER_API_KEY"),
-        base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+        model=f"openai/{model}",
+        api_key=api_key,
+        base_url=base_url,
         temperature=float(os.getenv("OPENROUTER_TEMPERATURE", "0.2")),
         max_tokens=int(os.getenv("OPENROUTER_MAX_TOKENS", "8000")),
         timeout=int(os.getenv("OPENROUTER_TIMEOUT_MS", "180000")),
@@ -224,7 +251,8 @@ def build_framework_task(agent, page_snapshot: str, selected_cases: str, pom_cod
 # ---------------------------------------------------------------------------
 def _kickoff(crew: Crew, agent_label: str) -> str:
     """Run a crew with start/finish/duration logging."""
-    log.info("%s | kickoff (model=%s)...", agent_label, os.getenv("OPENROUTER_MODEL"))
+    provider, model, _, _ = _active_provider()
+    log.info("%s | kickoff (provider=%s model=%s)...", agent_label, provider, model)
     t0 = time.perf_counter()
     try:
         result = str(crew.kickoff())

@@ -401,8 +401,12 @@ def _ms(t0: float) -> int:
 @app.get("/api/config")
 def config() -> dict:
     """Non-secret config the UI header displays."""
+    from agents import _active_provider
+
+    provider, model, _, _ = _active_provider()
     return {
-        "model": os.getenv("OPENROUTER_MODEL", ""),
+        "provider": provider,
+        "model": model,
         "headless": os.getenv("PAGE_READ_HEADLESS", "true"),
     }
 
