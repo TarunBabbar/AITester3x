@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CrewAI QA Demo — Playwright Automation Generator</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🤖</span>
+      <div>
+        <h1>CrewAI QA Demo</h1>
+        <p>Generate test cases → select them → build a Playwright POM framework → run it</p>
+      </div>
+    </div>
+    <div class="health" id="health">
+      <span class="dot"></span><span id="health-text">Checking…</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Phase 1: input + generate -->
+    <section class="card" id="input-card">
+      <h2>Step 1 — Point me at a page</h2>
+      <label for="url">Page URL</label>
+      <input id="url" type="text" placeholder="https://saucedemo.com"
+             value="https://saucedemo.com" />
+      <label for="requirements">Extra requirements (optional)</label>
+      <textarea id="requirements" rows="2"
+        placeholder="e.g. Focus on validation messages and negative login cases."></textarea>
+      <button id="generate-btn" class="primary">Generate Test Cases</button>
+      <div id="error-box" class="error hidden"></div>
+    </section>
+
+    <!-- Pipeline steps -->
+    <section class="card hidden" id="steps-card">
+      <h2>Pipeline</h2>
+      <ol id="steps"></ol>
+    </section>
+
+    <!-- Phase 2: test case list with selection -->
+    <section class="card hidden" id="tests-card">
+      <h2>Step 2 — Select test cases to automate</h2>
+      <div id="test-list"></div>
+      <div class="actions">
+        <button id="select-all-btn" class="secondary">Select All</button>
+        <button id="automate-btn" class="primary">Automate Selected</button>
+      </div>
+    </section>
+
+    <!-- Results -->
+    <section class="card hidden" id="results-card">
+      <h2>Results</h2>
+      <div class="tabs" id="tabs">
+        <button class="tab active" data-tab="pom">Page Object Model</button>
+        <button class="tab" data-tab="framework">Framework Files</button>
+        <button class="tab" data-tab="run">Test Run</button>
+      </div>
+      <div id="pom" class="tab-panel active"><pre class="output"></pre></div>
+      <div id="framework" class="tab-panel"><pre class="output"></pre></div>
+      <div id="run" class="tab-panel">
+        <button id="run-tests-btn" class="secondary run-tests-btn">▶ Run Tests</button>
+        <pre class="output"></pre>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
