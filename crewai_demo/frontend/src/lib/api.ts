@@ -11,9 +11,10 @@ export interface AgentRow {
   key: string;
   title: string;
   activity: string;
-  state: "running" | "done" | "failed";
+  state: "idle" | "running" | "done" | "failed";
   detail?: string;
   durationMs?: number;
+  startedAt?: number; // epoch ms — set when the agent flips to running
 }
 
 export interface TestCase {
