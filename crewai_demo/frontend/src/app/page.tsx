@@ -9,6 +9,7 @@ import {
   Health,
   listOutputFiles,
   OutputFile,
+  stopPipeline,
   streamPipeline,
   TestCase,
 } from "@/lib/api";
@@ -127,6 +128,24 @@ export default function Home() {
     );
   }, []);
 
+  // Stop the currently running pipeline on the server side
+  const stopRun = useCallback(() => {
+    if (!runId) return;
+    setPhaseLabel("Stopping…");
+    stopPipeline(runId).catch(() => {});
+  }, [runId]);
+
+  const handleRunStopped = useCallback(() => {
+    setPhaseLabel("Run stopped");
+    setAgents((rows) =>
+      rows.map((r) =>
+        r.state === "running"
+          ? { ...r, state: "idle", activity: "Stopped by user" }
+          : r,
+      ),
+    );
+  }, []);
+
   // -------------------------------------------------------------------------
   // Phase 1 — generate test cases
   // -------------------------------------------------------------------------
@@ -172,6 +191,7 @@ export default function Home() {
               test_designer: JSON.stringify(payload.test_cases, null, 2),
             }));
           }
+          if (ev.type === "run_stopped") handleRunStopped();
           if (ev.type === "error") handleError(ev.message!);
         },
       );
@@ -242,6 +262,7 @@ export default function Home() {
               )
               .catch(() => {});
           }
+          if (ev.type === "run_stopped") handleRunStopped();
           if (ev.type === "error") handleError(ev.message!);
         },
       );
@@ -287,6 +308,7 @@ export default function Home() {
             setRunSuccess(payload.success);
             setRunOutput(payload.output);
           }
+          if (ev.type === "run_stopped") handleRunStopped();
           if (ev.type === "error") handleError(ev.message!);
         },
       );
@@ -331,6 +353,7 @@ export default function Home() {
           onToggleTest={toggleTest}
           onSelectAll={toggleSelectAll}
           onAutomate={automateSelected}
+          onStop={stopRun}
           busy={busy}
           error={error}
           outputs={outputs}
@@ -347,6 +370,7 @@ export default function Home() {
           busy={busy}
           phaseLabel={phaseLabel}
           onRunTests={runTests}
+          onStop={stopRun}
         />
       )}
     </Shell>

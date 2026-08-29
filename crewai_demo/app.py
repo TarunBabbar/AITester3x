@@ -62,6 +62,34 @@ RUNS_DIR = BASE_DIR / "runs"
 
 app = FastAPI(title="CrewAI QA Demo", version="2.0.0")
 
+# ---------------------------------------------------------------------------
+# Run registry — tracks running pipelines so a client can stop them.
+# active_runs: {run_id: threading.Event} — set when a run should stop.
+# ---------------------------------------------------------------------------
+import threading  # noqa: E402
+
+_active_runs: dict[str, threading.Event] = {}
+_active_runs_lock = threading.Lock()
+
+
+def _register_run(run_id: str) -> threading.Event:
+    """Register a run and return its stop event."""
+    stop_event = threading.Event()
+    with _active_runs_lock:
+        _active_runs[run_id] = stop_event
+    return stop_event
+
+
+def _unregister_run(run_id: str) -> None:
+    with _active_runs_lock:
+        _active_runs.pop(run_id, None)
+
+
+def _run_stopped(stop_event: threading.Event) -> bool:
+    """True when the client asked to stop this run."""
+    return stop_event.is_set()
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -411,11 +439,26 @@ def config() -> dict:
     }
 
 
+@app.post("/api/stop/{run_id}")
+def stop_run(run_id: str) -> dict:
+    """Ask the backend to stop a running pipeline. The stream endpoint
+    checks the stop flag between steps and shuts down cleanly."""
+    with _active_runs_lock:
+        stop_event = _active_runs.get(run_id)
+    if stop_event is None:
+        return {"run_id": run_id, "stopped": False,
+                "message": "No active run with that id."}
+    stop_event.set()
+    log.info("run=%s | stop requested", run_id)
+    return {"run_id": run_id, "stopped": True}
+
+
 @app.post("/api/generate-tests/stream")
 def generate_tests_stream(req: GenerateRequest) -> StreamingResponse:
     """Phase 1 as a live event stream (Page Reader + Test Case Designer)."""
     def events():
         run_id = uuid.uuid4().hex[:8]
+        stop_event = _register_run(run_id)
         yield _sse({"type": "run_started", "runId": run_id, "phase": 1})
         log.info("PHASE 1 | run=%s | url=%s", run_id, req.url)
         try:
@@ -428,6 +471,9 @@ def generate_tests_stream(req: GenerateRequest) -> StreamingResponse:
             snapshot = PageReader().snapshot(req.url)
             page_snapshot = "\n".join(f"{k}: {v}" for k, v in snapshot.items())
             _save_run(run_id, "01_page_snapshot", page_snapshot)
+            if _run_stopped(stop_event):
+                yield _sse({"type": "run_stopped", "runId": run_id})
+                return
             yield _sse({
                 "type": "agent_done", "key": "page_reader",
                 "detail": f"Read '{snapshot.get('title', 'untitled page')}' — "
@@ -437,6 +483,9 @@ def generate_tests_stream(req: GenerateRequest) -> StreamingResponse:
                 "durationMs": _ms(t0),
             })
 
+            if _run_stopped(stop_event):
+                yield _sse({"type": "run_stopped", "runId": run_id})
+                return
             yield _sse({
                 "type": "agent_started", "key": "test_designer",
                 "title": "Agent 2 · Test Case Designer",
@@ -445,6 +494,9 @@ def generate_tests_stream(req: GenerateRequest) -> StreamingResponse:
             t0 = time.perf_counter()
             raw = run_test_case_agent(page_snapshot, req.requirements)
             _save_run(run_id, "02_test_cases_raw", raw)
+            if _run_stopped(stop_event):
+                yield _sse({"type": "run_stopped", "runId": run_id})
+                return
             test_cases = _extract_json(raw)
 
             if not test_cases:
@@ -471,6 +523,8 @@ def generate_tests_stream(req: GenerateRequest) -> StreamingResponse:
         except Exception as exc:
             log.exception("PHASE 1 FAILED | run=%s | %s", run_id, exc)
             yield _sse({"type": "error", "message": str(exc)})
+        finally:
+            _unregister_run(run_id)
 
     return StreamingResponse(events(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
@@ -482,6 +536,7 @@ def automate_stream(req: AutomateRequest) -> StreamingResponse:
     """Phase 2a as a live event stream (POM Writer + Framework Architect)."""
     def events():
         run_id = req.run_id
+        stop_event = _register_run(run_id)
         yield _sse({"type": "run_started", "runId": run_id, "phase": 2})
         log.info("PHASE 2 | run=%s | selected=%s", run_id, req.selected)
         try:
@@ -490,6 +545,9 @@ def automate_stream(req: AutomateRequest) -> StreamingResponse:
             all_cases = _extract_json(
                 (run_dir / "02_test_cases_raw.md").read_text(encoding="utf-8", errors="replace"))
             selected = [tc for tc in all_cases if tc.get("id") in set(req.selected)]
+            if _run_stopped(stop_event):
+                yield _sse({"type": "run_stopped", "runId": run_id})
+                return
             if not selected:
                 yield _sse({"type": "error", "message": "No matching selected test cases."})
                 return
@@ -515,6 +573,10 @@ def automate_stream(req: AutomateRequest) -> StreamingResponse:
                 "durationMs": _ms(t0),
             })
 
+            if _run_stopped(stop_event):
+                yield _sse({"type": "run_stopped", "runId": run_id})
+                return
+
             yield _sse({
                 "type": "agent_started", "key": "framework_architect",
                 "title": "Agent 4 · Framework Architect",
@@ -523,6 +585,9 @@ def automate_stream(req: AutomateRequest) -> StreamingResponse:
             t0 = time.perf_counter()
             framework_text = run_framework_agent(page_snapshot, selected_text, pom_code)
             _save_run(run_id, "04_framework_raw", framework_text)
+            if _run_stopped(stop_event):
+                yield _sse({"type": "run_stopped", "runId": run_id})
+                return
             files = write_framework(framework_text, run_id=run_id)
             all_files = files["written"] + [f"page-objects/{pom_filename}"]
             yield _sse({
@@ -545,6 +610,8 @@ def automate_stream(req: AutomateRequest) -> StreamingResponse:
         except Exception as exc:
             log.exception("PHASE 2 FAILED | run=%s | %s", run_id, exc)
             yield _sse({"type": "error", "message": str(exc)})
+        finally:
+            _unregister_run(run_id)
 
     return StreamingResponse(events(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
@@ -556,17 +623,22 @@ def run_tests_stream(req: RunTestsRequest) -> StreamingResponse:
     """Phase 2b as a live event stream (npm install + npx playwright test)."""
     def events():
         run_id = req.run_id
+        stop_event = _register_run(run_id)
         yield _sse({"type": "run_started", "runId": run_id, "phase": 3})
         run_dir = OUTPUT_DIR / run_id
         if not (run_dir / "package.json").exists():
             yield _sse({"type": "error",
                         "message": "No generated framework for this run. Automate test cases first."})
+            _unregister_run(run_id)
             return
         log.info("PHASE 2b | run=%s | running tests", run_id)
         try:
             lines = []
             ok = False
             for cmd in TestRunner(output_dir=run_dir)._commands():
+                if _run_stopped(stop_event):
+                    yield _sse({"type": "run_stopped", "runId": run_id})
+                    return
                 yield _sse({"type": "command_started", "command": cmd})
                 t0 = time.perf_counter()
                 result = subprocess.run(cmd, shell=True, cwd=run_dir,
@@ -590,6 +662,8 @@ def run_tests_stream(req: RunTestsRequest) -> StreamingResponse:
         except Exception as exc:
             log.exception("PHASE 2b FAILED | run=%s | %s", run_id, exc)
             yield _sse({"type": "error", "message": str(exc)})
+        finally:
+            _unregister_run(run_id)
 
     return StreamingResponse(events(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",

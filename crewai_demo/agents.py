@@ -42,21 +42,8 @@ log = logging.getLogger(__name__)
 # Shared settings (temperature, max tokens, timeout) apply to both.
 # ---------------------------------------------------------------------------
 def _commandcode_key() -> str | None:
-    """CMD_API_KEY from .env, falling back to the CLI's stored key.
-
-    Command Code stores its own key in ~/.commandcode/auth.json — the same
-    one the CLI authenticates with. Reading it here means the backend keeps
-    working when the key rotates in the CLI, with zero copy-pasting.
-    """
-    key = os.getenv("CMD_API_KEY")
-    if key:
-        return key
-    try:
-        auth_path = os.path.expanduser("~/.commandcode/auth.json")
-        with open(auth_path, encoding="utf-8") as fh:
-            return json.load(fh).get("apiKey")
-    except (OSError, json.JSONDecodeError):
-        return None
+    """Command Code API key — read strictly from .env (CMD_API_KEY)."""
+    return os.getenv("CMD_API_KEY")
 
 
 def _active_provider() -> tuple[str, str, str | None, str]:

@@ -19,6 +19,7 @@ export default function AutomationView({
   busy,
   phaseLabel,
   onRunTests,
+  onStop,
 }: {
   runId: string;
   pomCode: string;
@@ -29,16 +30,30 @@ export default function AutomationView({
   busy: boolean;
   phaseLabel: string;
   onRunTests: () => void;
+  onStop: () => void;
 }) {
   const [tab, setTab] = useState<"pom" | "files" | "run">("pom");
+  const anyCommandRunning = commands.some((c) => c.state === "running");
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-6">
-      <div>
-        <h1 className="text-xl font-bold tracking-tight">Test Automation</h1>
-        <p className="mt-0.5 text-sm text-ink-soft">
-          {runId ? `Run ${runId} · output/${runId}/` : "Automate test cases to generate the framework."}
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight">Test Automation</h1>
+          <p className="mt-0.5 text-sm text-ink-soft">
+            {runId
+              ? `Run ${runId} · output/${runId}/`
+              : "Automate test cases to generate the framework."}
+          </p>
+        </div>
+        {anyCommandRunning && (
+          <button
+            onClick={onStop}
+            className="shrink-0 rounded-lg border border-err/40 bg-err-soft px-4 py-2 text-sm font-semibold text-err transition hover:bg-err/20"
+          >
+            ■ Stop
+          </button>
+        )}
       </div>
 
       {commands.length > 0 && (

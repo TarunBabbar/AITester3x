@@ -17,6 +17,7 @@ export default function PipelineView({
   onToggleTest,
   onSelectAll,
   onAutomate,
+  onStop,
   busy,
   error,
   outputs,
@@ -29,18 +30,32 @@ export default function PipelineView({
   onToggleTest: (id: string) => void;
   onSelectAll: () => void;
   onAutomate: () => void;
+  onStop: () => void;
   busy: boolean;
   error: string;
   outputs: Record<string, string>;
 }) {
+  const anyAgentRunning = agents.some((a) => a.state === "running");
+  const anyCommandRunning = commands.some((c) => c.state === "running");
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-6">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold tracking-tight">Test Case Generation</h1>
-        <p className="mt-0.5 text-sm text-ink-soft">
-          {phaseLabel || "The crew is standing by — start a run from Home."}
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight">Test Case Generation</h1>
+          <p className="mt-0.5 text-sm text-ink-soft">
+            {phaseLabel || "The crew is standing by — start a run from Home."}
+          </p>
+        </div>
+        {(anyAgentRunning || anyCommandRunning) && (
+          <button
+            onClick={onStop}
+            className="shrink-0 rounded-lg border border-err/40 bg-err-soft px-4 py-2 text-sm font-semibold text-err transition hover:bg-err/20"
+          >
+            ■ Stop
+          </button>
+        )}
       </div>
 
       {/* Agent pipeline */}

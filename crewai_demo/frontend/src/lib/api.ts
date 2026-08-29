@@ -43,6 +43,7 @@ export interface PipelineEvent {
     | "command_started"
     | "command_done"
     | "phase_complete"
+    | "run_stopped"
     | "error";
   runId?: string;
   phase?: number;
@@ -87,6 +88,11 @@ export async function listOutputFiles(): Promise<OutputFile[]> {
   return data.files as OutputFile[];
 }
 
+/** Ask the backend to stop a running pipeline (server-side cancellation). */
+export async function stopPipeline(runId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/stop/${runId}`, { method: "POST" });
+}
+
 // ---------------------------------------------------------------------------
 // SSE over POST — the pipeline endpoints stream Server-Sent Events, but
 // EventSource only supports GET, so we parse the stream from fetch().
@@ -95,11 +101,13 @@ export async function streamPipeline(
   path: string,
   body: Record<string, unknown>,
   onEvent: (event: PipelineEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
   if (!res.ok || !res.body) {
     throw new Error(`Backend returned ${res.status}`);
