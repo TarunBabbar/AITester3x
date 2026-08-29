@@ -1,11 +1,6 @@
 import type { Metadata } from "next";
-import { Fraunces, Inter } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
-
-const fraunces = Fraunces({
-  subsets: ["latin"],
-  variable: "--font-fraunces",
-});
 
 const inter = Inter({
   subsets: ["latin"],
@@ -23,9 +18,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className={`${fraunces.variable} ${inter.variable} antialiased`}>
-        {children}
-      </body>
+      <body className={`${inter.variable} antialiased`}>{children}</body>
     </html>
   );
 }
