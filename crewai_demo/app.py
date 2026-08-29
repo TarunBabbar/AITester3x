@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -376,6 +377,219 @@ def list_output() -> dict:
             files.append({"name": str(p.relative_to(OUTPUT_DIR)),
                           "content": p.read_text(encoding="utf-8", errors="replace")})
     return {"files": files}
+
+
+# ---------------------------------------------------------------------------
+# SSE streaming endpoints — the Next.js UI consumes these to show live
+# agent activity ("what is running and what it is doing right now").
+#
+# Each endpoint yields `data: {json}\n\n` events:
+#   run_started | agent_started | agent_activity | agent_done
+#   agent_failed | command_started | command_done | phase_complete | error
+# ---------------------------------------------------------------------------
+from fastapi.responses import StreamingResponse  # noqa: E402
+
+
+def _sse(event: dict) -> str:
+    return f"data: {json.dumps(event)}\n\n"
+
+
+def _ms(t0: float) -> int:
+    return int((time.perf_counter() - t0) * 1000)
+
+
+@app.get("/api/config")
+def config() -> dict:
+    """Non-secret config the UI header displays."""
+    return {
+        "model": os.getenv("OPENROUTER_MODEL", ""),
+        "headless": os.getenv("PAGE_READ_HEADLESS", "true"),
+    }
+
+
+@app.post("/api/generate-tests/stream")
+def generate_tests_stream(req: GenerateRequest) -> StreamingResponse:
+    """Phase 1 as a live event stream (Page Reader + Test Case Designer)."""
+    def events():
+        run_id = uuid.uuid4().hex[:8]
+        yield _sse({"type": "run_started", "runId": run_id, "phase": 1})
+        log.info("PHASE 1 | run=%s | url=%s", run_id, req.url)
+        try:
+            yield _sse({
+                "type": "agent_started", "key": "page_reader",
+                "title": "Agent 1 · Page Reader",
+                "activity": "Launching headless Chromium and loading the page...",
+            })
+            t0 = time.perf_counter()
+            snapshot = PageReader().snapshot(req.url)
+            page_snapshot = "\n".join(f"{k}: {v}" for k, v in snapshot.items())
+            _save_run(run_id, "01_page_snapshot", page_snapshot)
+            yield _sse({
+                "type": "agent_done", "key": "page_reader",
+                "detail": f"Read '{snapshot.get('title', 'untitled page')}' — "
+                          f"{len(snapshot.get('inputs', []))} inputs, "
+                          f"{len(snapshot.get('buttons', []))} buttons, "
+                          f"{len(snapshot.get('links', []))} links",
+                "durationMs": _ms(t0),
+            })
+
+            yield _sse({
+                "type": "agent_started", "key": "test_designer",
+                "title": "Agent 2 · Test Case Designer",
+                "activity": "Analysing the page snapshot and drafting prioritised test cases...",
+            })
+            t0 = time.perf_counter()
+            raw = run_test_case_agent(page_snapshot, req.requirements)
+            _save_run(run_id, "02_test_cases_raw", raw)
+            test_cases = _extract_json(raw)
+
+            if not test_cases:
+                log.warning("run=%s | no parseable JSON from Test Case Designer", run_id)
+                yield _sse({
+                    "type": "agent_failed", "key": "test_designer",
+                    "detail": "Model did not return valid JSON test cases.",
+                })
+                yield _sse({"type": "error", "message": "Model returned no parseable JSON."})
+                return
+
+            yield _sse({
+                "type": "agent_done", "key": "test_designer",
+                "detail": f"Generated {len(test_cases)} test cases "
+                          f"({sum(1 for t in test_cases if t.get('priority') == 'P0')} P0)",
+                "durationMs": _ms(t0),
+            })
+            yield _sse({
+                "type": "phase_complete", "phase": 1,
+                "payload": {"run_id": run_id, "test_cases": test_cases, "url": req.url},
+            })
+            log.info("PHASE 1 DONE | run=%s | %d cases | %.1fs",
+                     run_id, len(test_cases), time.perf_counter())
+        except Exception as exc:
+            log.exception("PHASE 1 FAILED | run=%s | %s", run_id, exc)
+            yield _sse({"type": "error", "message": str(exc)})
+
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/automate/stream")
+def automate_stream(req: AutomateRequest) -> StreamingResponse:
+    """Phase 2a as a live event stream (POM Writer + Framework Architect)."""
+    def events():
+        run_id = req.run_id
+        yield _sse({"type": "run_started", "runId": run_id, "phase": 2})
+        log.info("PHASE 2 | run=%s | selected=%s", run_id, req.selected)
+        try:
+            run_dir = RUNS_DIR / run_id
+            page_snapshot = (run_dir / "01_page_snapshot.md").read_text(encoding="utf-8", errors="replace")
+            all_cases = _extract_json(
+                (run_dir / "02_test_cases_raw.md").read_text(encoding="utf-8", errors="replace"))
+            selected = [tc for tc in all_cases if tc.get("id") in set(req.selected)]
+            if not selected:
+                yield _sse({"type": "error", "message": "No matching selected test cases."})
+                return
+            selected_text = json.dumps(selected, indent=2)
+
+            yield _sse({
+                "type": "agent_started", "key": "pom_writer",
+                "title": "Agent 3 · POM Writer",
+                "activity": "Writing a typed TypeScript Page Object Model for the page...",
+            })
+            t0 = time.perf_counter()
+            pom_code = run_pom_writer_agent(page_snapshot, selected_text)
+            _save_run(run_id, "03_page_object_model", pom_code)
+            clean_pom = _extract_code_block(pom_code)
+            pom_filename = _pom_class_name(clean_pom)
+            (OUTPUT_DIR / run_id / "page-objects").mkdir(parents=True, exist_ok=True)
+            (OUTPUT_DIR / run_id / "page-objects" / pom_filename).write_text(
+                clean_pom, encoding="utf-8")
+            yield _sse({
+                "type": "agent_done", "key": "pom_writer",
+                "detail": f"page-objects/{pom_filename} "
+                          f"({len(clean_pom.splitlines())} lines)",
+                "durationMs": _ms(t0),
+            })
+
+            yield _sse({
+                "type": "agent_started", "key": "framework_architect",
+                "title": "Agent 4 · Framework Architect",
+                "activity": "Generating package.json, configs and the Playwright spec for the selected cases...",
+            })
+            t0 = time.perf_counter()
+            framework_text = run_framework_agent(page_snapshot, selected_text, pom_code)
+            _save_run(run_id, "04_framework_raw", framework_text)
+            files = write_framework(framework_text, run_id=run_id)
+            all_files = files["written"] + [f"page-objects/{pom_filename}"]
+            yield _sse({
+                "type": "agent_done", "key": "framework_architect",
+                "detail": f"Wrote {len(all_files)} files: {', '.join(all_files)}",
+                "durationMs": _ms(t0),
+            })
+            yield _sse({
+                "type": "phase_complete", "phase": 2,
+                "payload": {
+                    "run_id": run_id,
+                    "pom_code": pom_code,
+                    "framework_files": all_files,
+                    "output_dir": files.get("output_dir", ""),
+                    "selected": [tc.get("id") for tc in selected],
+                },
+            })
+            log.info("PHASE 2 DONE | run=%s | files=%s | %.1fs",
+                     run_id, all_files, time.perf_counter())
+        except Exception as exc:
+            log.exception("PHASE 2 FAILED | run=%s | %s", run_id, exc)
+            yield _sse({"type": "error", "message": str(exc)})
+
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/run-tests/stream")
+def run_tests_stream(req: RunTestsRequest) -> StreamingResponse:
+    """Phase 2b as a live event stream (npm install + npx playwright test)."""
+    def events():
+        run_id = req.run_id
+        yield _sse({"type": "run_started", "runId": run_id, "phase": 3})
+        run_dir = OUTPUT_DIR / run_id
+        if not (run_dir / "package.json").exists():
+            yield _sse({"type": "error",
+                        "message": "No generated framework for this run. Automate test cases first."})
+            return
+        log.info("PHASE 2b | run=%s | running tests", run_id)
+        try:
+            lines = []
+            ok = False
+            for cmd in TestRunner(output_dir=run_dir)._commands():
+                yield _sse({"type": "command_started", "command": cmd})
+                t0 = time.perf_counter()
+                result = subprocess.run(cmd, shell=True, cwd=run_dir,
+                                        capture_output=True, text=True,
+                                        timeout=int(os.getenv("TEST_RUNNER_TIMEOUT_MS", "600000")))
+                combined = (result.stdout or "") + (result.stderr or "")
+                lines.append(combined)
+                yield _sse({"type": "command_done", "command": cmd,
+                            "exitCode": result.returncode,
+                            "durationMs": _ms(t0)})
+                if result.returncode != 0:
+                    break
+            full_output = "\n".join(lines)
+            ok = "passed" in full_output.lower() and "failed" not in full_output.lower()
+            yield _sse({
+                "type": "phase_complete", "phase": 3,
+                "payload": {"run_id": run_id, "success": ok,
+                            "output": full_output[-6000:]},
+            })
+            log.info("PHASE 2b DONE | run=%s | %s", run_id, "PASSED" if ok else "FAILED")
+        except Exception as exc:
+            log.exception("PHASE 2b FAILED | run=%s | %s", run_id, exc)
+            yield _sse({"type": "error", "message": str(exc)})
+
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
 
 
 # ---------------------------------------------------------------------------

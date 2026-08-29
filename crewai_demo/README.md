@@ -37,12 +37,16 @@ All agents use a single LLM from OpenRouter, configured in `.env`.
 
 ```
 crewai_demo/
-├── app.py                 # FastAPI backend (two-phase orchestration)
+├── app.py                 # FastAPI backend (two-phase orchestration + SSE streams)
 ├── agents.py              # CrewAI agents + tasks (roles, goals, prompts)
 ├── page_reader.py         # Agent 1: Playwright page snapshot
 ├── framework_writer.py    # Saves agent file output to output/<run_id>/
 ├── test_runner.py         # Runs npx playwright test
-├── static/                # Web UI (HTML/CSS/JS)
+├── static/                # Legacy simple UI (still served at :8000)
+├── frontend/              # Next.js 15 + Tailwind 4 UI (beige theme, live pipeline)
+│   └── src/
+│       ├── app/           # layout.tsx, page.tsx, globals.css
+│       └── lib/api.ts     # SSE client + types
 ├── output/<run_id>/       # Generated Playwright framework per run
 ├── runs/<run_id>/         # Raw per-step agent outputs
 ├── requirements.txt
@@ -86,21 +90,45 @@ OPENROUTER_MODEL=minimax/minimax-m3:free
 
 ## Run
 
+Two processes — the backend API and the Next.js UI.
+
+**Terminal 1 — backend (port 8000):**
+
 ```bash
+cd crewai_demo
 .venv\Scripts\python app.py        # Windows
 # .venv/bin/python app.py          # macOS / Linux
 ```
 
-Open http://127.0.0.1:8000
+**Terminal 2 — frontend (port 3000):**
+
+```bash
+cd crewai_demo/frontend
+npm install                        # first time only
+npm run dev
+```
+
+Open **http://localhost:3000** (the old static UI still exists at
+http://127.0.0.1:8000 if you ever want it).
+
+Then, in the UI:
 
 1. Enter a URL (e.g. `https://saucedemo.com`), optionally add requirements,
-   click **Generate Test Cases**.
+   click **Generate Test Cases** — watch the live pipeline panel show
+   Agent 1 (Page Reader) and Agent 2 (Test Case Designer) working in real
+   time.
 2. Review the generated test cases with priorities, steps and expected
    results. Tick the ones you want.
-3. Click **Automate Selected** — the POM + Playwright framework is generated
-   with a proper folder structure under `output/<run_id>/`.
-4. Click **Run Tests** — the generated suite executes and the results show
-   inline.
+3. Click **Automate Selected** — the pipeline panel now shows Agent 3
+   (POM Writer) and Agent 4 (Framework Architect), then the generated POM
+   and framework files appear under Results (`output/<run_id>/` on disk).
+4. Open the **Test Run** tab and click **Run Tests** — commands stream in
+   live (`npm install --include=dev`, `npx playwright test`) and the
+   output shows inline.
+
+The frontend talks to the backend at `NEXT_PUBLIC_API_BASE`
+(default `http://127.0.0.1:8000`) — override with
+`frontend/.env.local` if you change ports.
 
 ## Agents
 
