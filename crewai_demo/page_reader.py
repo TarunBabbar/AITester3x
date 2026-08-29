@@ -11,14 +11,18 @@ deliberately trimmed to keep LLM token usage low (slim mode by default).
 Everything (timeout, headless, slim, max links) is configured via .env.
 """
 
+import logging
 import os
 import re
+import time
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
 load_dotenv()
+
+log = logging.getLogger(__name__)
 
 
 def _collapse(text: str) -> str:
@@ -48,6 +52,8 @@ class PageReader:
     def snapshot(self, url: str) -> Dict[str, Any]:
         """Open url and return its structured snapshot."""
         normalized = self._normalise_url(url)
+        t0 = time.perf_counter()
+        log.info("Agent 1 (Page Reader) | launching headless browser for %s", normalized)
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=self.headless)
             page = browser.new_page()
@@ -57,7 +63,18 @@ class PageReader:
 
                 data = self._extract(page)
                 data["url"] = normalized
+                log.info(
+                    "Agent 1 (Page Reader) | done: title=%r inputs=%d buttons=%d links=%d | %.1fs",
+                    data.get("title", ""),
+                    len(data.get("inputs", [])),
+                    len(data.get("buttons", [])),
+                    len(data.get("links", [])),
+                    time.perf_counter() - t0,
+                )
                 return data
+            except Exception:
+                log.exception("Agent 1 (Page Reader) | FAILED reading %s", normalized)
+                raise
             finally:
                 browser.close()
 

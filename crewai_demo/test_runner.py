@@ -14,8 +14,10 @@ Everything is configured through .env (auto-install, browser install).
 The command runs in a subprocess so long test runs never block the API.
 """
 
+import logging
 import os
 import subprocess
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -23,6 +25,8 @@ from dotenv import load_dotenv
 from framework_writer import OUTPUT_DIR
 
 load_dotenv()
+
+log = logging.getLogger(__name__)
 
 
 def _bool_env(name: str, default: str) -> bool:
@@ -81,11 +85,13 @@ class TestRunner:
         logs_dir.mkdir(parents=True, exist_ok=True)
         log_file = logs_dir / "test_run.log"
 
-        with open(log_file, "w", encoding="utf-8") as log:
+        with open(log_file, "w", encoding="utf-8") as fh:
             lines = []
             for line in self._commands():
-                log.write(f"$ {line}\n")
-                log.flush()
+                fh.write(f"$ {line}\n")
+                fh.flush()
+                log.info("running: %s (cwd=output/%s)", line, self.output_dir.name)
+                t0 = time.perf_counter()
                 result = subprocess.run(
                     line,
                     shell=True,
@@ -95,10 +101,13 @@ class TestRunner:
                     timeout=self.timeout,
                 )
                 combined = (result.stdout or "") + (result.stderr or "")
-                log.write(combined + "\n")
-                log.flush()
+                fh.write(combined + "\n")
+                fh.flush()
                 lines.append(combined)
+                log.info("finished: %s | exit=%d | %.1fs",
+                         line, result.returncode, time.perf_counter() - t0)
                 if result.returncode != 0:
+                    log.error("command failed (exit=%d): %s", result.returncode, line)
                     break
 
         full_output = "\n".join(lines)

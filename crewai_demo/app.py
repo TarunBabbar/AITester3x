@@ -20,8 +20,10 @@ Run:
 """
 
 import json
+import logging
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 from dotenv import load_dotenv
@@ -39,7 +41,19 @@ from agents import (
 from framework_writer import OUTPUT_DIR, write_framework
 from page_reader import PageReader
 from test_runner import TestRunner, node_available, npm_available
+
 load_dotenv()
+
+# ---------------------------------------------------------------------------
+# Logging — everything the pipeline does shows up in the terminal.
+# LOG_LEVEL comes from .env (DEBUG | INFO | WARNING | ERROR).
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("app")
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -150,6 +164,10 @@ def generate_tests(req: GenerateRequest) -> dict:
     """Phase 1: read the URL and generate structured test cases."""
     run_id = uuid.uuid4().hex[:8]
     steps: list[dict] = []
+    t0 = time.perf_counter()
+    log.info("=" * 60)
+    log.info("PHASE 1 | run=%s | url=%s | requirements=%r",
+             run_id, req.url, req.requirements[:80] or "-")
 
     try:
         # --- Step 1: Page Reader (Agent 1) -------------------------------
@@ -171,6 +189,7 @@ def generate_tests(req: GenerateRequest) -> dict:
         test_cases = _extract_json(raw)
 
         if not test_cases:
+            log.warning("run=%s | Test Case Designer returned no parseable JSON", run_id)
             steps.append({
                 "step": "Test Case Designer",
                 "status": "error",
@@ -191,6 +210,8 @@ def generate_tests(req: GenerateRequest) -> dict:
                       f"({sum(1 for t in test_cases if t.get('priority') == 'P0')} P0)",
         })
 
+        log.info("PHASE 1 DONE | run=%s | %d test cases | %.1fs total",
+                 run_id, len(test_cases), time.perf_counter() - t0)
         return {
             "run_id": run_id,
             "status": "success",
@@ -200,6 +221,7 @@ def generate_tests(req: GenerateRequest) -> dict:
         }
 
     except Exception as exc:
+        log.exception("PHASE 1 FAILED | run=%s | %s", run_id, exc)
         steps.append({"step": "Pipeline", "status": "error", "detail": str(exc)})
         return {
             "run_id": run_id,
@@ -233,6 +255,9 @@ def automate(req: AutomateRequest) -> dict:
                            "detail": "No matching selected test cases."}]}
 
     selected_text = json.dumps(selected, indent=2)
+    t0 = time.perf_counter()
+    log.info("PHASE 2 | run=%s | automating %d cases: %s",
+             req.run_id, len(selected), ", ".join(tc.get("id", "?") for tc in selected))
 
     try:
         # --- Step 3: POM Writer (Agent 3) ---------------------------------
@@ -247,6 +272,8 @@ def automate(req: AutomateRequest) -> dict:
         (output_run_dir / "page-objects" / pom_filename).write_text(
             clean_pom, encoding="utf-8"
         )
+        log.info("run=%s | POM saved -> output/%s/page-objects/%s",
+                 req.run_id, req.run_id, pom_filename)
 
         steps.append({
             "step": "POM Writer",
@@ -266,6 +293,10 @@ def automate(req: AutomateRequest) -> dict:
                       f"{', '.join(files['written'])}",
         })
 
+        log.info("PHASE 2 DONE | run=%s | files=%s | %.1fs total",
+                 req.run_id, files["written"] + [f"page-objects/{pom_filename}"],
+                 time.perf_counter() - t0)
+
         return {
             "run_id": req.run_id,
             "status": "success",
@@ -277,6 +308,7 @@ def automate(req: AutomateRequest) -> dict:
         }
 
     except Exception as exc:
+        log.exception("PHASE 2 FAILED | run=%s | %s", req.run_id, exc)
         steps.append({"step": "Automate", "status": "error", "detail": str(exc)})
         return {"run_id": req.run_id, "status": "error", "steps": steps}
 
@@ -287,12 +319,20 @@ def run_tests(req: RunTestsRequest) -> dict:
     steps: list[dict] = []
     run_dir = OUTPUT_DIR / req.run_id
     if not (run_dir / "package.json").exists():
+        log.warning("run=%s | run-tests skipped: no generated framework", req.run_id)
         steps.append({"step": "Test Runner", "status": "error",
                       "detail": "No generated framework for this run. Automate test cases first."})
         return {"run_id": req.run_id, "status": "error", "steps": steps,
                 "test_result": {"success": None, "output": ""}}
+    log.info("PHASE 2b | run=%s | running generated tests in output/%s",
+             req.run_id, req.run_id)
+    t0 = time.perf_counter()
     try:
         result = TestRunner(output_dir=run_dir).run()
+        log.info("run=%s | test run %s | %.1fs",
+                 req.run_id,
+                 "PASSED" if result["success"] else "FAILED",
+                 time.perf_counter() - t0)
         steps.append({
             "step": "Test Runner",
             "status": "done",
@@ -305,6 +345,7 @@ def run_tests(req: RunTestsRequest) -> dict:
             "test_result": result,
         }
     except Exception as exc:
+        log.exception("PHASE 2b FAILED | run=%s | %s", req.run_id, exc)
         steps.append({"step": "Test Runner", "status": "error", "detail": str(exc)})
         return {"run_id": req.run_id, "status": "error", "steps": steps,
                 "test_result": {"success": None, "output": ""}}

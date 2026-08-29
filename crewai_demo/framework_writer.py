@@ -14,12 +14,15 @@ This module parses those blocks, validates the filenames (no path
 traversal), writes them under output/, and reports what was written.
 """
 
+import logging
 import re
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 # Where the generated framework lands. gitignored.
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -101,12 +104,17 @@ def write_framework(raw: str, run_id: str = "default") -> Dict[str, object]:
 
     for name, content in files:
         if not _safe_name(run_dir, name):
+            log.warning("skipping unsafe path from agent output: %r", name)
             skipped.append(name)
             continue
         target = (run_dir / name).resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         written.append(name)
+        log.info("wrote output/%s/%s (%d bytes)", run_id, name, len(content))
+
+    if skipped:
+        log.warning("skipped %d unsafe path(s): %s", len(skipped), skipped)
 
     return {
         "written": written,

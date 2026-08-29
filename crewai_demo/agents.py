@@ -17,12 +17,16 @@ tests -> build the automation. Each agent has a narrow role, and the output
 of one feeds the next.
 """
 
+import logging
 import os
+import time
 
 from crewai import Agent, Crew, LLM, Task
 from dotenv import load_dotenv
 
 load_dotenv()
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +222,20 @@ def build_framework_task(agent, page_snapshot: str, selected_cases: str, pom_cod
 # ---------------------------------------------------------------------------
 # Step 3 + 4 - Crew and kickoff
 # ---------------------------------------------------------------------------
+def _kickoff(crew: Crew, agent_label: str) -> str:
+    """Run a crew with start/finish/duration logging."""
+    log.info("%s | kickoff (model=%s)...", agent_label, os.getenv("OPENROUTER_MODEL"))
+    t0 = time.perf_counter()
+    try:
+        result = str(crew.kickoff())
+        log.info("%s | done (%d chars) | %.1fs", agent_label, len(result),
+                 time.perf_counter() - t0)
+        return result
+    except Exception:
+        log.exception("%s | FAILED after %.1fs", agent_label, time.perf_counter() - t0)
+        raise
+
+
 def run_test_case_agent(page_snapshot: str, extra_requirements: str) -> str:
     """Run Agent 2 (test case designer) and return its JSON array output."""
     agent = build_test_case_agent()
@@ -227,7 +245,7 @@ def run_test_case_agent(page_snapshot: str, extra_requirements: str) -> str:
         tasks=[task],
         verbose=os.getenv("CREW_VERBOSE", "false").lower() == "true",
     )
-    return str(crew.kickoff())
+    return _kickoff(crew, "Agent 2 (Test Case Designer)")
 
 
 def run_pom_writer_agent(page_snapshot: str, selected_cases: str) -> str:
@@ -239,7 +257,7 @@ def run_pom_writer_agent(page_snapshot: str, selected_cases: str) -> str:
         tasks=[task],
         verbose=os.getenv("CREW_VERBOSE", "false").lower() == "true",
     )
-    return str(crew.kickoff())
+    return _kickoff(crew, "Agent 3 (POM Writer)")
 
 
 def run_framework_agent(page_snapshot: str, selected_cases: str, pom_code: str) -> str:
@@ -251,7 +269,7 @@ def run_framework_agent(page_snapshot: str, selected_cases: str, pom_code: str) 
         tasks=[task],
         verbose=os.getenv("CREW_VERBOSE", "false").lower() == "true",
     )
-    return str(crew.kickoff())
+    return _kickoff(crew, "Agent 4 (Framework Architect)")
 
 
 if __name__ == "__main__":
