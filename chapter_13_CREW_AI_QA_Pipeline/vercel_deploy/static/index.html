@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jira QA Crew</title>
+<style>
+  :root {
+    --bg: #0b1220; --panel: #101a2e; --border: #1f2d47;
+    --accent: #2f8fe0; --text: #e2e8f0; --muted: #8ba0bf;
+    --ok: #34d399; --warn: #fbbf24; --err: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: linear-gradient(135deg, #0b3a75 0%, #1668c1 55%, #2f8fe0 100%);
+    min-height: 100vh; color: var(--text);
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+  .hero { background: rgba(11, 18, 32, .85); border: 1px solid var(--border);
+    border-radius: 14px; padding: 1.6rem 1.9rem; margin-bottom: 1.4rem; }
+  .hero h1 { margin: 0 0 .35rem; font-size: 2rem; color: #fff; }
+  .hero p { margin: 0; color: #bcd3ef; font-size: 1rem; }
+  .card { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.2rem 1.4rem; margin-bottom: 1.2rem; }
+  label { display: block; font-weight: 600; margin-bottom: .4rem; color: #cfe0f5; }
+  textarea, input[type="text"] {
+    width: 100%; padding: .7rem .8rem; border-radius: 8px;
+    border: 1px solid var(--border); background: #0d1526; color: var(--text);
+    font-size: 1rem; font-family: inherit;
+  }
+  textarea { min-height: 84px; resize: vertical; }
+  .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; margin-top: .8rem; }
+  button {
+    background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+    padding: .7rem 1.4rem; font-size: 1rem; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .hint { color: var(--muted); font-size: .85rem; margin-top: .5rem; }
+  .badge { display: inline-block; padding: .15rem .6rem; border-radius: 999px;
+    font-size: .75rem; font-weight: 600; margin-right: .4rem;
+    border: 1px solid var(--border); }
+  .badge-ok { background: rgba(52, 211, 153, .15); color: var(--ok); }
+  .badge-warn { background: rgba(251, 191, 36, .15); color: var(--warn); }
+  .badge-err { background: rgba(248, 113, 113, .15); color: var(--err); }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: .8rem; margin-bottom: 1.2rem; }
+  .metric { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: .8rem 1rem; }
+  .metric .v { font-size: 1.5rem; font-weight: 700; color: #fff; }
+  .metric .k { font-size: .78rem; color: var(--muted); }
+  details { border: 1px solid var(--border); border-radius: 8px;
+    padding: .4rem .8rem; margin-bottom: .6rem; background: #0d1526; }
+  summary { cursor: pointer; font-weight: 600; padding: .3rem 0; color: #dbeafe; }
+  pre { background: #0a0f1c; border: 1px solid var(--border); border-radius: 8px;
+    padding: .8rem; overflow: auto; font-size: .82rem; line-height: 1.45; }
+  table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  .dl a, .dl button { color: var(--accent); text-decoration: none; font-weight: 600;
+    margin-right: 1rem; background: none; border: 0; cursor: pointer; padding: 0; font-size: .9rem; }
+  .err { color: var(--err); }
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--accent);
+    border-top-color: transparent; border-radius: 50%; animation: sp .8s linear infinite;
+    vertical-align: middle; margin-right: .5rem; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  code { background: #0a0f1c; padding: .1rem .35rem; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <h1>Jira QA Crew</h1>
+    <p>AI-powered QA artifact generator — requirements analysis, test plan,
+       test cases, Playwright automation and traceability from a Jira ticket.</p>
+  </div>
+
+  <div class="card">
+    <label for="tickets">Jira ticket IDs</label>
+    <textarea id="tickets" placeholder="MDP-7">MDP-7</textarea>
+    <div class="row">
+      <button id="runBtn" onclick="run()">Analyze &amp; Generate QA Pack</button>
+      <span id="status" class="hint"></span>
+    </div>
+    <div class="hint">One ticket per request. 4 sequential LLM stages take 3–6 minutes.</div>
+  </div>
+
+  <div id="summary" class="summary" style="display:none"></div>
+  <div id="output"></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function run() {
+  const btn = $("runBtn");
+  btn.disabled = true;
+  const status = $("status");
+  status.innerHTML = '<span class="spin"></span>Running the QA crew… this can take several minutes.';
+  $("output").innerHTML = "";
+  $("summary").style.display = "none";
+
+  const tickets = $("tickets").value.split(/[\s,;\n]+/).filter(Boolean);
+  if (!tickets.length) {
+    status.textContent = "Enter at least one ticket ID.";
+    btn.disabled = false;
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tickets }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      status.textContent = "";
+      $("output").innerHTML = `<div class="card err"><strong>Error:</strong> ${escapeHtml(data.error || res.statusText)}</div>`;
+      return;
+    }
+    status.textContent = `Done — run ${data.run_id}`;
+    render(data);
+  } catch (e) {
+    status.textContent = "";
+    $("output").innerHTML = `<div class="card err"><strong>Request failed:</strong> ${escapeHtml(String(e))}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function render(data) {
+  const total = data.results.length;
+  const done = data.results.filter(r => r.status === "completed" || r.status === "completed_with_warnings").length;
+  const failed = data.results.filter(r => r.status === "failed").length;
+
+  $("summary").style.display = "grid";
+  $("summary").innerHTML = `
+    <div class="metric"><div class="v">${escapeHtml(data.run_id.replace("RUN-", ""))}</div><div class="k">Run ID</div></div>
+    <div class="metric"><div class="v">${total}</div><div class="k">Tickets</div></div>
+    <div class="metric"><div class="v">${done}</div><div class="k">Completed</div></div>
+    <div class="metric"><div class="v">${failed}</div><div class="k">Failed</div></div>
+  `;
+
+  // Collect rendered markdown per ticket for the download links.
+  window.__md = {};
+  for (const r of data.results) {
+    if (r.artifacts_md) window.__md[r.ticket_key] = r.artifacts_md;
+  }
+
+  $("output").innerHTML = data.results.map(resultHtml).join("") +
+    (data.zip_b64
+      ? `<div class="card dl"><a href="#" onclick="downloadZip(event)">Download all artifacts (ZIP)</a></div>`
+      : "");
+  window.__zip = data.zip_b64;
+  window.__runId = data.run_id;
+}
+
+function downloadZip(e) {
+  e.preventDefault();
+  const bytes = atob(window.__zip);
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  const blob = new Blob([arr], { type: "application/zip" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${window.__runId || "qa"}_artifacts.zip`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function resultHtml(r) {
+  const cls = r.status === "failed" ? "badge-err"
+    : r.status === "completed" ? "badge-ok" : "badge-warn";
+  let html = `
+    <div class="card">
+      <h2 style="margin:0 0 .6rem">${escapeHtml(r.ticket_key)} &nbsp;<span class="badge ${cls}">${escapeHtml(r.status)}</span></h2>
+      ${r.error ? `<div class="err">${escapeHtml(r.error)}</div>` : ""}
+  `;
+
+  if (r.analysis) {
+    const a = r.analysis;
+    html += `<details open><summary>Requirements Analysis (${(a.requirements || []).length} reqs)</summary>
+      <p><strong>${escapeHtml(a.summary || "")}</strong></p>
+      <ul>${(a.requirements || []).map(x => `<li><code>${escapeHtml(x.id)}</code> ${escapeHtml(x.text)} <span class="hint">[${escapeHtml(x.provenance)}]</span></li>`).join("")}</ul>
+      ${(a.acceptance_criteria || []).length ? `<p><strong>Acceptance criteria:</strong></p><ul>${a.acceptance_criteria.map(c => `<li><code>${escapeHtml(c.id)}</code> ${escapeHtml(c.text)}</li>`).join("")}</ul>` : ""}
+      ${(a.missing_information || []).length ? `<p class="hint">Missing info: ${a.missing_information.map(escapeHtml).join("; ")}</p>` : ""}
+    </details>`;
+  }
+
+  if (r.test_plan) {
+    const sections = r.test_plan.sections || [];
+    html += `<details><summary>Test Plan (${sections.length} sections)</summary>
+      ${sections.map(s => `<p><strong>${s.number}. ${escapeHtml(s.title)}</strong><br/>${escapeHtml(s.content)}</p>`).join("")}
+    </details>`;
+  }
+
+  if (r.test_cases && r.test_cases.test_cases) {
+    const cases = r.test_cases.test_cases;
+    html += `<details><summary>Test Cases (${cases.length})</summary>
+      <table><tr><th>ID</th><th>Title</th><th>Priority</th><th>Type</th><th>Automation</th><th>Expected</th></tr>
+      ${cases.map(c => `<tr><td><code>${escapeHtml(c.id)}</code></td><td>${escapeHtml(c.title)}</td><td>${escapeHtml(c.priority)}</td><td>${escapeHtml(c.test_type)}</td><td>${escapeHtml(c.automation_candidate)}</td><td>${escapeHtml(c.expected_result || "")}</td></tr>`).join("")}
+      </table>
+    </details>`;
+  }
+
+  if (r.playwright && r.playwright.files) {
+    html += r.playwright.files.map(f => `<details><summary>Playwright — ${escapeHtml(f.path)} (${escapeHtml(r.playwright.readiness || "")})</summary><pre>${escapeHtml(f.content)}</pre></details>`).join("");
+  }
+
+  if (r.coverage) {
+    const c = r.coverage;
+    html += `<details><summary>Traceability</summary>
+      <table><tr><th>Requirement</th><th>AC</th><th>Test cases</th><th>Coverage</th></tr>
+      ${(c.rows || []).map(row => `<tr><td><code>${escapeHtml(row.requirement_id)}</code></td><td>${escapeHtml(row.acceptance_criterion_id || "—")}</td><td>${escapeHtml((row.test_case_ids || []).join(", ") || "—")}</td><td>${escapeHtml(row.coverage_status)}</td></tr>`).join("")}
+      </table>
+      <p class="hint">Req coverage: ${c.requirement_coverage_pct}% · Automation: ${c.automation_pct}%</p>
+    </details>`;
+  }
+
+  const md = r.artifacts_md || {};
+  if (Object.keys(md).length) {
+    html += `<div class="dl" style="margin-top:.6rem">Downloads: ${Object.entries(md).map(([name]) => `<a href="#" onclick="downloadText(event, '${escapeAttr(r.ticket_key)}', '${escapeAttr(name)}')">${escapeHtml(name)}</a>`).join("")}</div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+function downloadText(e, ticketKey, name) {
+  e.preventDefault();
+  const md = (window.__md[ticketKey] || {})[name];
+  if (!md) return;
+  const blob = new Blob([md], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Store rendered markdown per ticket for the download links.
+window.__md = {};
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function escapeAttr(s) { return escapeHtml(s).replace(/"/g, "&quot;"); }
+</script>
+</body>
+</html>

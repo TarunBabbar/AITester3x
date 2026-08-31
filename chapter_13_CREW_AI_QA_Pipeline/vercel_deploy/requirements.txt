@@ -1,0 +1,10 @@
+# Vercel Python function deps. Trimmed from the Streamlit app: no streamlit,
+# no pandas (UI-only), no pandas/streamlit transitive weight. MCP SDK ships
+# with crewai-tools[mcp]; it stays dormant because JIRA_INTEGRATION_MODE=rest.
+crewai==1.15.17
+crewai-tools[mcp]==1.15.17
+flask==3.1.2
+pydantic==2.12.5
+requests==2.34.2
+python-dotenv==1.2.3
+PyYAML==6.0.3
