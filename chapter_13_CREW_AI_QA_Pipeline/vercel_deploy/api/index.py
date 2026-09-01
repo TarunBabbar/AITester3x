@@ -19,7 +19,7 @@ import os
 import sys
 from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, render_template, request
 
 # Find the src/ directory holding jira_qa_crew. It is installed as a package
 # from vercel_deploy/src (pyproject.toml [tool.setuptools.packages.find]
@@ -48,8 +48,13 @@ MAX_TICKETS_PER_REQUEST = 1
 
 
 # ---------------------------------------------------------------------------
-# UI (served from public/** by the Vercel CDN) and liveness
+# UI (served by Flask from api/templates) and liveness
 # ---------------------------------------------------------------------------
+@app.get("/")
+def index():
+    return render_template("index.html")
+
+
 @app.get("/health")
 def health():
     return jsonify({"ok": True})
