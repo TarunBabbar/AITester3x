@@ -7,5 +7,8 @@ description = "Jira QA Crew pipeline on Vercel (Flask)"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.vercel]
 entrypoint = "api.index:app"

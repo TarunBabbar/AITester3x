@@ -21,10 +21,17 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request
 
-ROOT = Path(__file__).resolve().parents[2]  # .../chapter_13_CREW_AI_QA_Pipeline
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+# Find the src/ directory holding jira_qa_crew. It is installed as a package
+# from vercel_deploy/src (pyproject.toml [tool.setuptools.packages.find]
+# where=["src"]); fall back to a sys.path walk for local dev.
+try:
+    import jira_qa_crew  # noqa: F401
+except ImportError:
+    _here = Path(__file__).resolve()
+    for _p in (_here.parent.parent, *_here.parent.parent.parents):
+        if (_p / "src" / "jira_qa_crew").is_dir():
+            sys.path.insert(0, str(_p / "src"))
+            break
 
 from jira_qa_crew.config import Settings  # noqa: E402
 from jira_qa_crew.exceptions import TicketInputError  # noqa: E402
