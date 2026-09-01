@@ -7,9 +7,10 @@ Python `../src/jira_qa_crew` package unchanged — no Streamlit, no UI framework
 ```
 vercel_deploy/
   api/index.py            Flask entry point (Vercel Python function)
+  pyproject.toml          tool.vercel.entrypoint = api.index:app
   requirements.txt        Python deps (no streamlit/pandas)
   vercel.json             Function config: maxDuration 300s, 2GB memory
-  static/index.html       Single-page UI (plain HTML/JS)
+  public/index.html       Single-page UI (served by the Vercel CDN)
 ```
 
 ## How it works

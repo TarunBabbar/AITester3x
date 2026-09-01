@@ -56,10 +56,11 @@ def _stub_pipeline(monkeypatch, run_summary):
     monkeypatch.setattr(mod, "QAPipeline", _Stub)
 
 
-def test_index_serves_html(client):
-    resp = client.get("/")
-    assert resp.status_code == 200
-    assert b"Jira QA Crew" in resp.data
+def test_public_index_exists():
+    """The UI is served by the Vercel CDN from public/, not by Flask."""
+    public = ROOT / "vercel_deploy" / "public" / "index.html"
+    assert public.exists()
+    assert "Jira QA Crew" in public.read_text()
 
 
 def test_health(client):

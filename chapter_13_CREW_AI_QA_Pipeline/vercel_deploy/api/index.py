@@ -16,11 +16,10 @@ from __future__ import annotations
 import base64
 import logging
 import os
-import re
 import sys
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request
 
 ROOT = Path(__file__).resolve().parents[2]  # .../chapter_13_CREW_AI_QA_Pipeline
 SRC = ROOT / "src"
@@ -35,22 +34,15 @@ from jira_qa_crew.services.tickets import parse_ticket_input  # noqa: E402
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
-app = Flask(__name__, static_folder=None)
+app = Flask(__name__)
 
 #: Hard cap per request. One ticket is 4 sequential LLM calls (3-6 min).
 MAX_TICKETS_PER_REQUEST = 1
 
-_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]+\-\d+$")
-
 
 # ---------------------------------------------------------------------------
-# UI
+# UI (served from public/** by the Vercel CDN) and liveness
 # ---------------------------------------------------------------------------
-@app.get("/")
-def index():
-    return send_from_directory(ROOT / "vercel_deploy" / "static", "index.html")
-
-
 @app.get("/health")
 def health():
     return jsonify({"ok": True})
