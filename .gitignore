@@ -9,6 +9,11 @@ venv/
 target/
 *.class
 
+# Secrets
+.env
+.env.*
+!.env.example
+
 # IDE
 .idea/
 *.iml
